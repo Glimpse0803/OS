@@ -160,10 +160,10 @@ static inline uint64_t get_cycles(void) {
 在控制台运行发现输出结果正确：
 
 运行`make qemu`结果如下：
-![make qemu](./figures/1.png)
+<img src=".\images\1.png">
 
 运行`make grade`结果如下：
-![make grade](./figures/2.png)
+<img src=".\images\2.png">
 
 
 ## Lab1 Challenge 1
@@ -190,7 +190,7 @@ static inline uint64_t get_cycles(void) {
 
 ### SAVE_ALL中寄寄存器保存在栈中的位置是什么确定的？
 通过sp指针（指向栈顶）来控制，如下图，将栈顶上移36个寄存器的位置，然后以sp的位置为基础，计算偏移来存储32个x寄存器和四个csr寄存器的内容
-<img src=".\figures\L1C1.png">
+<img src=".\images\L1C1.png">
 
 
 ### __alltraps 中都需要保存所有寄存器吗？
