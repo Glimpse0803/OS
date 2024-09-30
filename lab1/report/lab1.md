@@ -267,7 +267,7 @@ asm("ebreak");
 - 在断点异常的处理中，使用`tf->epc+=2`实现`tf->epc`寄存器的更新，是因为`asm("ebreak")`指令的长度为2个字节。
 
 ### 运行结果
- ![result](./figures/3.png)
+ ![result](./images/3.png)
 
  发现触发了相关的异常，并且显示了触发非法操作的地址信息。
 
