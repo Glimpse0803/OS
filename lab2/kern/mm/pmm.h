@@ -16,20 +16,23 @@
 struct pmm_manager {
     const char *name;  // XXX_pmm_manager's name
     void (*init)(
-        void);  // initialize internal description&management data structure
+        void);  // 初始化XXX_pmm_manager内部的数据结构（如空闲页面的链表）
+                // initialize internal description&management data structure
                 // (free block list, number of free block) of XXX_pmm_manager
     void (*init_memmap)(
         struct Page *base,
-        size_t n);  // setup description&management data structcure according to
+        size_t n);  // 知道了可用的物理页面数目之后，进行更详细的初始化
+                    // setup description&management data structcure according to
                     // the initial free physical memory space
     struct Page *(*alloc_pages)(
-        size_t n);  // allocate >=n pages, depend on the allocation algorithm
+        size_t n);  // 分配至少n个物理页面, 根据分配算法可能返回不同的结果
+                    // allocate >=n pages, depend on the allocation algorithm
     void (*free_pages)(struct Page *base, size_t n);  // free >=n pages with
                                                       // "base" addr of Page
                                                       // descriptor
                                                       // structures(memlayout.h)
-    size_t (*nr_free_pages)(void);  // return the number of free pages
-    void (*check)(void);            // check the correctness of XXX_pmm_manager
+    size_t (*nr_free_pages)(void);  // 返回空闲物理页面的数目 // return the number of free pages
+    void (*check)(void);            // 测试正确性 // check the correctness of XXX_pmm_manager
 };
 
 extern const struct pmm_manager *pmm_manager;
@@ -52,6 +55,7 @@ size_t nr_free_pages(void); // number of free pages
  * corresponding physical address.  It panics if you pass it a non-kernel
  * virtual address.
  * */
+// 将内核虚拟地址（KVA）转换为物理地址（PADDR）
 #define PADDR(kva)                                                 \
     ({                                                             \
         uintptr_t __m_kva = (uintptr_t)(kva);                      \

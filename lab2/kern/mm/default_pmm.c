@@ -53,29 +53,41 @@
  *               (5.2) reset the fields of pages, such as p->ref, p->flags (PageProperty)
  *               (5.3) try to merge low addr or high addr blocks. Notice: should change some pages's p->property correctly.
  */
+
+ // 用来记录空闲物理页面的管理信息
 free_area_t free_area;
 
-#define free_list (free_area.free_list)
-#define nr_free (free_area.nr_free)
+// 存储所有空闲的物理页面(直接使用 free_list 来引用 free_area 结构体中的 free_list 成员，方便操作链表)
+#define free_list (free_area.free_list) 
+// 记录当前空闲的物理页面数量(类似地，用于方便操作空闲页面数量)
+#define nr_free (free_area.nr_free) 
 
+// 初始化空闲页面链表 free_list 和空闲页面计数器 nr_free
 static void
 default_init(void) {
     list_init(&free_list);
     nr_free = 0;
 }
 
+// 初始化一段连续的物理页面区域，并将其加入空闲页面链表
+// base: 指向第一个页面的指针
+// n: 指向第一个页面的指针
 static void
 default_init_memmap(struct Page *base, size_t n) {
     assert(n > 0);
     struct Page *p = base;
+    // 遍历每个页面，确保它们处于保留状态，并重置它们的标志位和引用计数
     for (; p != base + n; p ++) {
         assert(PageReserved(p));
         p->flags = p->property = 0;
         set_page_ref(p, 0);
     }
+    // 第一个页面的 property 字段被设置为页面块大小 n，用于记录这个页面块的大小
     base->property = n;
     SetPageProperty(base);
     nr_free += n;
+    // 将初始化的页面块加入到空闲页面链表中，并按地址顺序插入
+    // 如果空闲链表为空，则直接插入，否则按照地址顺序找到合适的位置插入
     if (list_empty(&free_list)) {
         list_add(&free_list, &(base->page_link));
     } else {
@@ -92,49 +104,66 @@ default_init_memmap(struct Page *base, size_t n) {
     }
 }
 
+// 分配 n 个连续的物理页面
+// n: 要分配的页面数量
 static struct Page *
 default_alloc_pages(size_t n) {
     assert(n > 0);
+    // 如果空闲页面数量少于 n，返回 NULL 表示分配失败
     if (n > nr_free) {
         return NULL;
     }
     struct Page *page = NULL;
     list_entry_t *le = &free_list;
+    // 遍历空闲链表，寻找属性字段（property）大于等于 n 的页面块
     while ((le = list_next(le)) != &free_list) {
+        // 找到合适的页面块后，将该页面块从链表中移除
         struct Page *p = le2page(le, page_link);
+        // 如果页面块的大小大于 n，则将剩余的页面重新分割成一个新的页面块，并将其插入链表中(看看剩下的有没有大于n)
         if (p->property >= n) {
             page = p;
             break;
         }
     }
+    // 如果页面块的大小大于 n，则将剩余的页面重新分割成一个新的页面块，并将其插入链表中(看看大于n的是否存在)
     if (page != NULL) {
         list_entry_t* prev = list_prev(&(page->page_link));
         list_del(&(page->page_link));
+        // 如果存在就把他分割并插入链表
         if (page->property > n) {
             struct Page *p = page + n;
             p->property = page->property - n;
             SetPageProperty(p);
             list_add(prev, &(p->page_link));
         }
+        // 更新 nr_free，减少已分配的页面数量
         nr_free -= n;
         ClearPageProperty(page);
     }
+    // 返回分配成功的页面块指针
     return page;
 }
 
+// 释放 n 个连续的物理页面，并将它们重新加入空闲链表
+// base: 要释放的页面的起始地址
+// n: 要释放的页面的数量
 static void
 default_free_pages(struct Page *base, size_t n) {
     assert(n > 0);
     struct Page *p = base;
+    // 依次检查每个页面是否是未被保留且没有设置属性位，确保它们可以被释放
     for (; p != base + n; p ++) {
         assert(!PageReserved(p) && !PageProperty(p));
+        // 将页面标记为可用
         p->flags = 0;
         set_page_ref(p, 0);
     }
+    // 标记页面块并更新空闲页面数量，将页面块的大小设为 n
     base->property = n;
     SetPageProperty(base);
     nr_free += n;
 
+    // 将释放的页面块插入到空闲链表中，按地址顺序排列
     if (list_empty(&free_list)) {
         list_add(&free_list, &(base->page_link));
     } else {
@@ -150,6 +179,7 @@ default_free_pages(struct Page *base, size_t n) {
         }
     }
 
+    // 尝试合并 base 与其前面的页面块
     list_entry_t* le = list_prev(&(base->page_link));
     if (le != &free_list) {
         p = le2page(le, page_link);
@@ -161,6 +191,7 @@ default_free_pages(struct Page *base, size_t n) {
         }
     }
 
+    // 尝试合并 base 与其后面的页面块
     le = list_next(&(base->page_link));
     if (le != &free_list) {
         p = le2page(le, page_link);
@@ -172,11 +203,13 @@ default_free_pages(struct Page *base, size_t n) {
     }
 }
 
+// 返回当前空闲页面的数量，即 nr_free
 static size_t
 default_nr_free_pages(void) {
     return nr_free;
 }
 
+// 测试和检查物理内存管理器是否工作正常
 static void
 basic_check(void) {
     struct Page *p0, *p1, *p2;
@@ -230,6 +263,7 @@ basic_check(void) {
 
 // LAB2: below code is used to check the first fit allocation algorithm
 // NOTICE: You SHOULD NOT CHANGE basic_check, default_check functions!
+// 测试和检查物理内存管理器是否工作正常
 static void
 default_check(void) {
     int count = 0, total = 0;
@@ -292,14 +326,14 @@ default_check(void) {
     assert(count == 0);
     assert(total == 0);
 }
-//这个结构体在
+// 定义当前物理内存管理器的各种操作函数
 const struct pmm_manager default_pmm_manager = {
-    .name = "default_pmm_manager",
-    .init = default_init,
-    .init_memmap = default_init_memmap,
-    .alloc_pages = default_alloc_pages,
-    .free_pages = default_free_pages,
-    .nr_free_pages = default_nr_free_pages,
-    .check = default_check,
+    .name = "default_pmm_manager", // 物理内存管理器的名字 "default_pmm_manager"
+    .init = default_init, // 初始化函数指针，指向 default_init
+    .init_memmap = default_init_memmap, // 内存映射初始化函数，指向 default_init_memmap
+    .alloc_pages = default_alloc_pages, // 页面分配函数，指向 default_alloc_pages
+    .free_pages = default_free_pages, // 页面释放函数，指向 default_free_pages
+    .nr_free_pages = default_nr_free_pages, // 获取空闲页面数量的函数
+    .check = default_check, // 检查函数，用于调试和验证
 };
 
