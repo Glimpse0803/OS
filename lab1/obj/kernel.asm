@@ -682,12 +682,12 @@ void exception_handler(struct trapframe *tf) {
     802004d4:	00001517          	auipc	a0,0x1
     802004d8:	b2c50513          	addi	a0,a0,-1236 # 80201000 <etext+0x5e0>
     802004dc:	b95ff0ef          	jal	ra,80200070 <cprintf>
-            tf->epc = tf->epc + 4;
+            tf->epc = tf->epc + 2;
     802004e0:	10843783          	ld	a5,264(s0)
 }
     802004e4:	60a2                	ld	ra,8(sp)
-            tf->epc = tf->epc + 4;
-    802004e6:	0791                	addi	a5,a5,4
+            tf->epc = tf->epc + 2;
+    802004e6:	0789                	addi	a5,a5,2
     802004e8:	10f43423          	sd	a5,264(s0)
 }
     802004ec:	6402                	ld	s0,0(sp)
