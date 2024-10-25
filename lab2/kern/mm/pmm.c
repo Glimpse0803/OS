@@ -1,5 +1,6 @@
 #include <default_pmm.h>
 #include <best_fit_pmm.h>
+#include <slub_pmm.h>
 #include <defs.h>
 #include <error.h>
 #include <memlayout.h>
@@ -38,6 +39,8 @@ static void check_alloc_page(void);
 // 其实是因为那些接口只是作为函数指针，作为pmm_manager的一部分，我们需要把那些函数指针变量赋值为真正的函数名称。
 // 看起来我们在这里实现了那些接口
 static void init_pmm_manager(void) {
+    //pmm_manager = &slub_pmm_manager;
+    //pmm_manager = &buddy_pmm_manager;
     pmm_manager = &best_fit_pmm_manager;
     cprintf("memory management: %s\n", pmm_manager->name);
     pmm_manager->init();
