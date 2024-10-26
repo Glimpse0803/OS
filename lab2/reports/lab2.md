@@ -1128,23 +1128,23 @@ assert函数用于检查其参数是否为真，如果参数为假，则程序�
 - 此时再想为D分配5个页面，即为D分配8个页面，此时剩余的是3号节点的7个页面，不满足要求，所以failed;
 
 
-![alt text](image4.png)
+![alt text](images/image4.png)
 
 这时如果freeA的节点，则3号节点刚好有8个页面，可以为D分配。这时所有内存均被分配；
 
 我们再free D的连续的14个页面，实际上free了16个页面，此时1号节点的所有内存均为空闲；
 
 之后再为A分配8个节点，free C后的8个页面，现在的分配情况如下：
-![alt text](image5.png)
+![alt text](images/image5.png)
 之后再为C分配8个页面，此时C在4号节点处；
 free 掉从A开始的16个页面后，我们再free从C偏移20个后的两个页面，这一步操作可以验证页面的分配是连续的，发现是正确的；
-![alt text](image6.png)
+![alt text](images/image6.png)
 刚才C的起始在第9块，偏移20后指向29块，最后是29，30两块被释放；
-![alt text](image7.png)
+![alt text](images/image7.png)
 这一条同理，不过释放3块页实际上是释放4块，所以25，26，27，28四块均被释放；
 
 编写的剩下的结果如下，我们发现均满足要求。
-![alt text](image3.png)
+![alt text](images/image3.png)
 ### Buddy System评价
 #### 优点
 1. **减少内存碎片**：Buddy System通过合并伙伴块，有效减少了内存碎片。
