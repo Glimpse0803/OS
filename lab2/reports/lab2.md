@@ -631,7 +631,7 @@ best_fit_free_pages(struct Page *base, size_t n) {
 
 ### 2.运行截图
 
-![alt text](image.png)
+![alt text](images\image.png)
 ![alt text](image-1.png)
 
 我们可以看到ucore在显示其entry（入口地址）、etext（代码段截止处地址）、edata（数据段截止处地址）、和end（ucore截止处地址）的值后，ucore显示了物理内存的布局信息，其中包含了内存范围。接下来ucore会以页为最小分配单位实现一个简单的内存分配管理，完成页表的建立，进入分页模式，执行各种我们设置的检查，最后显示ucore建立好的页表内容，并在分页模式下响应时钟中断。
