@@ -1174,8 +1174,8 @@ typedef struct bigblock bigblock_t;
 
 ### 全局变量
 - `static slob_t arena`: 初始空闲块，用于管理空闲内存。
-- `static slob_t *slobfree`: 当前空闲块的指针。
-- `static bigblock_t *bigblocks`: 管理大块内存的链表。
+- `static slob_t *slobfree`: 空闲slob块链表，设计为单向循环链表
+- `static bigblock_t *bigblocks`: 大块链表，设计为单向链表
 ```c
 static slob_t arena = { .next = &arena, .units = 1 };
 static slob_t *slobfree = &arena;
@@ -1194,11 +1194,11 @@ void slub_init(void) {
 
 #### 小块分配内存
 - 对于小内存的分配我们需要在其头部加上一个slob_t结构体，如果待分配的大小没有超过PGSIZE - SLOB_UNIT，调用slob_alloc为其分配size + SLOB_UNIT大小的空间（因为要算上头部的slob_t）。
-- 如果请求的大小大于一页，则调用 `alloc_pages` 函数为大对象分配内存。
+- 如果请求的大小大于一页，则调用 `slub_alloc` 函数为大对象分配内存。
 - 对于slob块的分配，由于这里只使用了单向循环链表，所以需要额外记录一下上一个节点的地址。遍历空闲块的链表，比较空闲块的大小与分配的大小关系：
   - 如果大小相等，直接分配出去，更新链表
   - 如果空闲块较大，则将多出的空间合并到下一个slub块中，将当前的块分配出去，更新链表
-  - 如果没有合适的空间，分配一页，调用slub_free将其加入到链表的合适位置，重新遍历
+  - 如果没有合适的空间，分配一页，调用`slub_free`将其加入到链表的合适位置，重新遍历
 ```c
 static void *slob_alloc(size_t size)
 {
@@ -1237,8 +1237,10 @@ static void *slob_alloc(size_t size)
 
 #### 释放内存
 - 释放内存块并合并相邻的空闲块。
-- 如果页面小于一页，则调用slob_free释放内存，由于在分配出去的时候我们将其加一以获得实际可以使用的内存地址，所以在这里我们需要将其减一以获得slob_t
+- 如果页面小于一页，则调用`slob_free`释放内存，由于在分配出去的时候我们将其加一以获得实际可以使用的内存地址，所以在这里我们需要将其减一以获得slob_t
 ```c
+（slob_free((slob_t *)block - 1, 0);）
+
 static void slob_free(void *block, int size)
 {
 	slob_t *cur, *b = (slob_t *)block;
