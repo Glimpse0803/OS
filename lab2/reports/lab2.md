@@ -631,13 +631,15 @@ best_fit_free_pages(struct Page *base, size_t n) {
 
 ### 2.运行截图
 
-![alt text](image.png)
-![alt text](image-1.png)
+![alt text](images/image.png)
+
+![alt text](images/image-1.png)
 
 我们可以看到ucore在显示其entry（入口地址）、etext（代码段截止处地址）、edata（数据段截止处地址）、和end（ucore截止处地址）的值后，ucore显示了物理内存的布局信息，其中包含了内存范围。接下来ucore会以页为最小分配单位实现一个简单的内存分配管理，完成页表的建立，进入分页模式，执行各种我们设置的检查，最后显示ucore建立好的页表内容，并在分页模式下响应时钟中断。
 
 make grade的截图如下：
-![alt text](image-2.png)
+
+![alt text](images/image-2.png)
 ### 3.程序在进行物理内存分配的过程
 
 首先，我们在kern_init()里，新增一个调用新函数pmm_init()的接口并调用该函数。pmm_init()主要就是用来主要负责初始化物理内存管理，该函数定义在pmm.c文件。
@@ -664,9 +666,480 @@ Best-Fit 算法本质上是一个查找问题，可以通过更高效的数据�
 
 此外，我们仍可以采用延迟合并的策略，即在一定条件下或者触发时机进行合并操作，将内存释放时的合并操作推迟到系统认为合适的时机，比如当空闲内存达到某个阈值时或者在分配内存请求失败时，触发一次全局的合并操作，以最大化可用内存。这样减少了释放内存时的合并开销，优化系统性能，但仍然在必要时合并以减少碎片化。
 
+## challenge1: Buddy System实现
+
+### 基本原理
+
+Buddy System（伙伴系统）是一种内存分配算法，它将内存划分为大小相等的块，每个块的大小都是2的幂次方.
+
+这些块组成了一个二叉树结构，其中根节点表示整个可用内存，而叶子节点表示最小的内存块。除根结点外，每个节点都有一个与之关联的伙伴节点。以实现高效的内存分配和释放。
+
+1. **内存划分**：Buddy System将内存划分为若干个大小为2的幂次方的块。例如，假设系统有1MB的内存，可以将其划分为1KB、2KB、4KB、8KB、16KB等大小的块;
+
+2. **伙伴关系**：大小相同的块称为“伙伴”。两个伙伴在物理地址上是连续的，并且它们的起始地址是2的幂次方的关系。例如，一个起始地址为0x1000的4KB块，其伙伴的起始地址可能是0x2000;
+
+3. **分配策略**：当需要分配内存时，Buddy System会寻找大小最合适的块进行分配。如果找不到大小恰好合适的块，它会选择稍大一点的块，并将其一分为二，直到找到合适大小的块;
+
+4. **合并策略**：当释放内存时，Buddy System会检查相邻的块是否为伙伴。如果是，它会将这两个伙伴合并为一个更大的块，从而减少内存碎片;
+
+5. **释放内存**：当要释放分配的内存时， Buddy 系统会将被释放的内存块标记为空闲，并尝试与其伙伴节点合并（如果伙伴节点也是空闲的）。合并后，继续尝试与更高级别的伙伴节点合并，直到不能再合并为止。这可以有效地合并连续的空闲内存块，以便再次分配。
+
+### 详细步骤
+
+1. **初始化**：系统启动时，Buddy System将所有可用内存划分为一个大的块，并将其插入到空闲块列表中。
+2. **内存分配**：
+   - 计算所需内存大小：将请求的内存大小调整为2的幂次方。
+   - 查找空闲块：在空闲块列表中查找大小合适的块。
+   - 分配内存：如果找到合适大小的块，直接分配；如果没有找到，选择稍大一点的块，将其一分为二，直到找到合适大小的块。将新分配的块从空闲块列表中移除。
+3. **内存释放**：
+   - 查找伙伴：将释放的块与其伙伴进行比较，检查它们是否可以合并。
+   - 合并块：如果找到伙伴，将它们合并为一个更大的块，并将合并后的块插入到空闲块列表中。
+   - 重复合并：继续检查合并后的块是否有新的伙伴，直到无法合并为止。
+
+### 具体实现
+总体思路是利用二叉树的性质存放不同大小的内存。其中，二叉树的节点存储着该层的内存大小和是否空闲信息，高层节点对应更大的块，低层对应更小的块。
+
+我们参考best_fit_pmm的整个程序，编写相应的函数与测试结构。
+
+#### buddy_pmm.h的实现
+ 
+ 我们定义buddy_pmm.h头文件，在里面添加页面管理器 buddy_pmm_manager;
+
+ ```c
+ 
+ #ifndef __KERN_MM_BUDDY_PMM_H__
+#define __KERN_MM_BUDDY_PMM_H__
+#include <pmm.h>
+extern const struct pmm_manager buddy_pmm_manager;
+#endif /* ! __KERN_MM_BUDDY_PMM_H__ */
+ 
+ ```
+
+#### buddy_pmm.c的实现
+
+在该文件中，我们编写了一些常用的计算指数、log2底数的函数，方便我们快速调用。
+
+- int pow2(int exponent):返回2的exponent次幂；
+- int log2_floor(int x):返回x以2为底的对数（向下取整）；
+- int log2_ceil(int x): 返回x以2为底的对数（向上取整）；
+- bool is_power_of_2(int x):检查x是否是2的幂次方;
+
+- int max_special(int a,int b): 返回a b 中的最大值，注意特殊处理255：
+
+    - 我们在设置是可以接收的最大层是255，这里比较两个数以2为底的指数来比较大小；
+    - 如果a,b都等于255，返回255；
+    - 如果其中一个是255，函数将返回另一个数（相当于将255进行错误处理）；
+    - 两个数都小于255，正常比较大小。
 
 
-## 设计文档：SLUB 内存分配器
+#### 页面管理器的定义：
+
+与其余的文件类似，替换为buddy_pmm_manager。
+
+
+```c
+const struct pmm_manager buddy_pmm_manager = {
+ .name = "buddy_pmm_manager",
+ .init = buddy_init,
+ .init_memmap = buddy_init_memmap,
+ .alloc_pages = buddy_alloc_pages,
+ .free_pages = buddy_free_pages,
+ .nr_free_pages = buddy_nr_free_pages,
+ .check = buddy_check,
+};
+```
+
+#### 初始化buddy的结构
+
+```c
+struct buddy
+{
+uint8_t level; //层数
+uint8_t longest[10000]; //初始化数组的长度，保存每个节点的高度，进而可以计算出当前块代表的内存大小
+};
+```
+
+与best_fit模型不同的是，buddy_system这种数据储存结构每次通过遍历二叉树来获取当前空闲内存块，所以不需要链表这一个数据结构存储空闲区域。我们可以通过设定全局变量num_free来记录空闲块的数量。
+
+接下来我们利用函数buddy_init_mmemap进行页面的初始化。
+```c
+static void
+buddy_init_memmap(struct Page *base, size_t n)
+{
+assert(n > 0);
+struct Page *p = base;
+page_base = base; 
+uint8_t allocpages_level = log2_floor(n);
+unsigned actual_n = pow2(allocpages_level); 
+num_free += actual_n;
+for (; p != base + actual_n; p++)
+ {
+assert(PageReserved(p));
+p->flags = 0;
+p->property = 1;
+SetPageProperty(p);
+set_page_ref(p, 0);
+ }
+buddy_new(self, allocpages_level);
+}
+```
+
+在这个函数中，我们从base出发（即二叉树的根节点），对每一个页面进行访问，将这些页面的标记为空页面（flag=0）。我们在这个结构里不修改Page的定义，进而将Page结构中的property置为与flag意义相似。最后清除对此页的虚拟引用。
+
+最后一行调用buddy_new()函数完成最后的初始化。
+
+```c
+static void buddy_new(struct buddy *s, uint8_t level)
+{
+    if (level < 0)
+        return;
+
+    s->level = level;
+
+    int total_size = 2 * pow2(level) - 1;
+    uint8_t node_level = level + 1;
+    for (int i = 0; i < total_size; ++i)
+    {
+        if (is_power_of_2(i + 1))
+            node_level--;
+        s->longest[i] = node_level;
+    }
+}
+```
+这个函数根据实际传入的level大小，初始化longest数组，计算所有节点管理内存的大小。
+
+
+#### 分页机制
+阅读相关资料，我们可以以此图为例。
+![alt text](images/image1.png)
+
+在分配阶段，首先要搜索大小适配的块，假设第一次分配3，转换成2的幂是4，我们先要对整个内存进行对半切割，从16切割到4需要两步，那么从下标[0]节点开始深度搜索到下标[3]的节点并将其标记为已分配。第二次再分配3那么就标记下标[4]的节点。第三次分配6，即大小为8，那么搜索下标[2]的节点，因为下标[1]所对应的块被下标[3~4]占用了。
+
+1. 基于以上的思路，我们利用buddy_alloc_pages（）进行页面分配
+```c
+
+
+static struct Page *
+buddy_alloc_pages(size_t n)
+{
+    assert(n > 0);    // 判断n是否大于0
+    if (n > num_free) // 需要分配的页的个数大于空闲页的总数，直接返回
+    {
+        return NULL;
+    }
+
+    uint8_t alloc_level = log2_ceil(n); // 需要的页数求log2并向上取整
+    unsigned alloc_num = pow2(alloc_level);
+    unsigned offset = buddy_alloc(alloc_level); // 进行分配，得到分配首页相对根节点的偏移量
+
+    if (offset == -1) // 分配异常
+        return NULL;
+
+    // 根据偏移，找到分配的页面
+    struct Page *page = page_base + offset;
+    num_free -= alloc_num;
+
+    // 标记为占用页
+    for (struct Page *p = page; p != page + alloc_num; p++)
+    {
+        ClearPageProperty(p);
+    }
+
+    return page;
+}
+```
+我们在分配页面前要进行断言判断，然后计算需要分配的页数n（向上取整），之后计算实际页数，获得分配首页，相对根节点的偏移量，最后设置相关的位标记。返回分配的页面指针。
+
+2. 接下来是页面分配函数buddy_alloc。我们在上个函数实现的只是传入和获得偏移之后对总体内存块标记位的处理，具体的查找操作还是基于以下函数实现。
+
+```c
+static unsigned buddy_alloc(uint8_t level)
+{
+    if (self == NULL)
+        return -1;
+    if (level < 0)
+        level = 0;
+    if (self->longest[0] < level || self->longest[0] == 0xFF)
+        return -1;
+    unsigned index = 0;
+    uint8_t node_level = self->level;
+    // 从根节点开始，搜索左右子树
+    for (; node_level != level; node_level--)
+    {
+        if (self->longest[LEFT_LEAF(index)] >= level && self->longest[LEFT_LEAF(index)] != 0xFF)
+        {
+            if (self->longest[RIGHT_LEAF(index)] >= level && self->longest[RIGHT_LEAF(index)] != 0xFF)
+            {
+                // 都符合条件，沿着最小值所在子树搜索
+                if (self->longest[LEFT_LEAF(index)] > self->longest[RIGHT_LEAF(index)])
+                {
+                    index = RIGHT_LEAF(index);
+                }
+                else
+                {
+                    index = LEFT_LEAF(index);
+                }
+            }
+            else
+            {
+                index = LEFT_LEAF(index);
+            }
+        }
+        else
+        {
+            index = RIGHT_LEAF(index);
+        }
+    }
+    self->longest[index] = 0xFF; // 标记为已占用
+    modify_subtree(index);       // 将子树都标记为已占用
+    unsigned offset = (index + 1) * pow2(node_level) - pow2(self->level);
+    // 层层向上回溯，改变父节点的值，父节点longest值是两个子结点的最大值
+    while (index)
+    {
+        index = PARENT(index);
+        self->longest[index] = max_special(self->longest[LEFT_LEAF(index)], self->longest[RIGHT_LEAF(index)]);
+    }
+    return offset;
+}
+```
+- 检查根节点：如果 self->longest[0] 小于 level 或者等于 0xFF （十六进制255），则无法分配满足要求的内存块，返回 -1 表示分配失败；
+- 检查当前节点的左子树和右子树的 longest 值是否都大于等于 level 并且不等于 0xFF ；
+    - 如果两个子树都符合条件，选择其中最小的 longest 值所在的子树继续搜索。
+    - 如果只有一个子树符合条件，就选择这个子树继续搜索。
+
+- 上述搜索直到搜索到的节点管理的内存刚好等于要分配的内存时为止。一旦找到一个合适的节点，将该节点的 longest 值设置为 0xFF ，表示已经被占用。
+
+
+- 然后，通过调用 modify_subtree 函数来标记该节点子树的所有节点都被占用。
+- 接着，计算分配的首页相对于根节点页面的偏移量 offset ；
+    - 通过逐级向上回溯的方式，更新父节点的 longest 值，确保它是其两个子节点的 longest 值中的最大值。
+- 最终，返回分配的首页相对于根节点页面的偏移量 offset ，表示分配成功。
+
+
+#### 释放页面
+
+释放页面的机制是从底向上回溯，首先寻找目标块，进行内存释放；之后判断该块的兄弟节点是否空闲，如果空闲，则这两个节点进行合并。之后继续向上遍历，直到无法合并或者回溯到根节点。
+
+- 首先计算释放的页数 n 的对数并向上取整，储存在free_level中：
+
+```c
+uint8_t free_level = log2_ceil(n);
+int free_num = pow2(free_level);
+```
+- 计算分配的首页相对于根节点页面的偏移量offset，同时检查offset的有效性：
+```c
+unsigned offset = base - page_base; // 释放首页相对根节点页的偏移
+assert(self && offset >= 0 && offset < pow2(self->level));
+```
+- 利用index进行初始化：
+
+```c
+uint8_t node_level = 0;
+// 把单页相对根节点页的偏移转换成该单页在树中的节点序号
+unsigned index = offset + pow2(self->level) - 1;
+```
+
+接下来寻找释放的合适节点。
+
+- 从当前节点回溯其父节点，直到找到分配的节点内存与释放内存大小相等；或回溯到根节点仍没有寻找到，此时终止回溯，返回未找到。
+
+- 找到合适节点后利用assign_depth修改节点状态；
+
+- 修改父母节点的记录值
+```c
+ for (;; index = PARENT(index))
+    {
+        // 从该节点向上找其父母节点，找到一个能满足大小且已经被分配的节点
+        if (self->longest[index] == 0xFF && node_level == free_level)
+            break;
+        node_level++;
+        if (index <= 0)
+            return;
+    }
+// 将该节点释放，需要修改其所有子节点的longest值
+assign_depth(free_level, index);
+// 向上合并，修改父母节点的记录值
+```
+
+重新处理了节点状态后，我们从下向上尝试合并相邻的空闲的块，终止状态会不能再合并或已经合并到根节点。
+- 左节点与右节点的空闲内存和等于父节点的管理值，可以合并；父节点longest值是log2(volume)(longest同时代表了内存大小和高度)；
+- 不能合并，父节点longest值是两个子结点的最大值；
+- 向上遍历直到根节点。
+
+
+```c
+unsigned left_longest, right_longest, node_size;
+
+while (index)
+    {
+        index = PARENT(index);
+
+        node_level++;
+        if (self->longest[LEFT_LEAF(index)] == 0xFF)
+            left_longest = 0;
+        else
+            left_longest = pow2(self->longest[LEFT_LEAF(index)]);
+        if (self->longest[RIGHT_LEAF(index)] == 0xFF)
+            right_longest = 0;
+        else
+            right_longest = pow2(self->longest[RIGHT_LEAF(index)]);
+
+        node_size = pow2(node_level);
+
+        // 左右子树longest的值相加是否等于原空闲块满状态的大小，能够合并
+        if (left_longest + right_longest == node_size)
+        {
+            self->longest[index] = log2_ceil(node_size);
+        }
+        else
+        {
+            // 不能合并，取最大值
+            self->longest[index] = max_special(self->longest[LEFT_LEAF(index)], self->longest[RIGHT_LEAF(index)]);
+        }
+    }
+    num_free += free_num;
+
+    unsigned base_offset = index;
+    while (LEFT_LEAF(base_offset) < 2 * pow2(self->level) - 1)
+    {
+        base_offset = LEFT_LEAF(base_offset);
+    }
+    base_offset = base_offset - pow2(self->level) + 1;
+    // 标记为空闲页
+    for (struct Page *p = page_base; p != page_base + free_num; p++)
+    {
+        SetPageProperty(p);
+    }
+
+
+```
+
+
+#### 测试性能
+
+首先将pmm_manager修改为&buddy_init_memmap;
+
+在检查中，我们先调用基本检查basic_check，这个函数会执行以下的操作：
+
+
+    - 我们分配三个页面，并验证它们是不同的；
+    - 验证每个页面的引用计数为0；
+    - 验证每个页面的物理地址在合法范围内；
+    - 通过将空闲页面数设置为0来模拟内存耗尽的情况，并验证无法分配新页面；
+    - 释放三个页面并验证空闲页面数增加；
+    - 再次分配三个页面，并验证无法分配更多页面；
+    - 释放一个页面并立即重新分配，验证是否能够分配到之前释放的页面；
+    - 恢复空闲页面数并释放所有页面。
+
+每一个操作我们都要用assert检查他们的合法性，如果是合法的，则不会发生中断。
+
+
+
+```c
+struct Page *A, *B, *C, *D, *E;
+assert((A = alloc_page()) != NULL);
+assert((B = alloc_page()) != NULL);
+assert(ini_free == num_free + 2);
+assert(A + 1 == B);
+```
+之后我们给这些页面初始化一定的大小，同时用assert断言进行检查：
+
+
+```c
+assert((A = buddy_alloc_pages(1)) != NULL);
+assert((B = buddy_alloc_pages(27)) != NULL);
+assert((C = buddy_alloc_pages(33)) != NULL);
+assert((D = buddy_alloc_pages(121)) != NULL);
+assert((E = buddy_alloc_pages(8)) != NULL);
+assert(A + 8 == E);
+assert(A + 32 == B);
+assert(B + 32 == C);
+assert(C + 64 == D);
+```
+
+我们知道，分配的大小是可容纳页面所需的大小的最小2的幂次方，在后四行检查中，我们直接为前面的Page加上一定的偏移，查找是否可以通过此方法查找到下一个页面。
+
+之后我们仿照basic_check函数进行buddy_check函数的编写；利用buddy_check函数对分配的页面进行检查：
+
+```C
+static void
+buddy_check(void)
+{
+    basic_check(); // 调用另一个检查函数，可能是用于基本功能测试的函数
+
+    int ini_free = num_free; 
+
+    struct Page *A, *B, *C, *D, *E; 
+
+    // 分配两个连续的页面，并检查它们是否连续
+    assert((A = alloc_page()) != NULL); 
+    assert((B = alloc_page()) != NULL); 
+    assert(ini_free == num_free + 2); // 断言空闲页面数量减少了2
+    assert(A + 1 == B); // 断言A和B指向的页面是连续的
+    buddy_free_pages(A, 2); // 释放A开始的2个页面
+    assert(num_free == ini_free); // 断言释放后空闲页面数量恢复到初始值
+
+    // 分配不同大小的页面块，并检查它们是否按预期分配
+    assert((A = buddy_alloc_pages(1)) != NULL); // 分配1个页面给A
+    assert((B = buddy_alloc_pages(27)) != NULL); 
+    assert((C = buddy_alloc_pages(33)) != NULL); 
+    assert((D = buddy_alloc_pages(121)) != NULL); 
+    assert((E = buddy_alloc_pages(8)) != NULL); 
+    assert(A + 8 == E); // 断言E分配的页面紧随A之后
+    assert(A + 32 == B); 
+    assert(B + 32 == C); 
+    assert(C + 64 == D); 
+    buddy_free_pages(A + 8, 7); // 释放E开始的7个页面
+    buddy_free_pages(A, 1); // 释放A的1个页面
+
+    // 再次分配并释放页面，检查内存管理是否正常
+    assert((A = buddy_alloc_pages(32)) != NULL); // 分配32个页面给A
+    assert(A + 32 == B); // 断言A和B指向的页面是连续的
+    buddy_free_pages(A, 32); // 释放A的32个页面
+    buddy_free_pages(B, 30); // 释放B的30个页面
+    buddy_free_pages(C, 33); // 释放C的33个页面
+    assert((A = buddy_alloc_pages(128)) != NULL); // 分配128个页面给A
+    assert(A + 128 == D); // 断言A和D指向的页面是连续的
+    assert(256 + num_free == ini_free); // 断言当前空闲页面加上已分配的页面总数等于初始空闲页面数
+    buddy_free_pages(A, 254); // 释放A的254个页面
+}
+
+```
+
+这个函数执行以下操作：
+
+- 使用assert来验证内存分配和释放操作的正确性。
+- 通过alloc_page和buddy_alloc_pages分配页面，并通过buddy_free_pages释放页面。
+- 验证分配的页面是否按预期顺序排列。
+- 验证释放页面后，空闲页面数量是否正确地恢复。
+- 通过分配和释放不同大小的页面块来测试伙伴系统的合并和分割机制。
+
+assert函数用于检查其参数是否为真，如果参数为假，则程序会中断执行，并报告错误。经过测试后，我们发现并不会产生这类的中断。
+
+
+为了检测这个页面分配机制，我们编写一个可视化的函数。将空闲页面标记为-，非空闲页面标记为/，我们初始化一个大小为32的数组，这个数组保存了buddy_system的一颗树。
+
+我们知道，数组的标号可以与树的节点产生一定的联系，基于此，我们可以在每一次的页面分配时调用可视化函数，查看当前页面的占有情况。
+
+![alt text](images/image2.png)
+我们对这些输出结果做一些关键部分的解释。
+- 首先，A作为开始页面，作为根节点；
+- 为B分配6个页面，实际上分配的8个页面，此时应该分配到第三层节点上，则是4号节点中的内存，所有
+
+![alt text](images/image3.png)
+### Buddy System评价
+#### 优点
+1. **减少内存碎片**：Buddy System通过合并伙伴块，有效减少了内存碎片。
+2. **快速分配和释放**：由于内存块大小固定且为2的幂次方，因此分配和释放操作非常快速。
+3. **易于实现**：Buddy System的算法相对简单，易于实现。
+#### 缺点
+1. **内部碎片**：虽然Buddy System减少了外部碎片，但可能会产生内部碎片，因为分配的内存块可能比实际需要的大。
+2. **合并开销**：频繁的合并操作可能会带来一定的性能开销。
+总之，Buddy System是一种高效的内存分配算法，适用于需要频繁分配和释放内存的场景。
+
+
+
+## challenge2 ：SLUB 内存分配器
 
 ### 算法概述
 SLUB分配算法是一种用于动态内存管理的内存分配器，主要用于操作系统内核中，它能够高效地管理内存，同时保持低延迟和高并发性能。
@@ -937,7 +1410,7 @@ slub check end
 - 结果解释：
 初始情况下链表中有一个表头，但是我们在这里不将他计入长度，所以初始长度为0。接下来首先分配了一个大内存，slub会为之分配一个页，但是由于在这里需要创建一个bigblock_t项(控制结构)，会向slub申请一个小内存，所以申请完成之后slobfree的长度增加1，后续两次申请时都会从原本的一个大页中取下一部分，所以长度不变。在释放p2时，由于其与后一项中间隔了一个p3，无法合并，所以slob变成了2，之后释放p3时会合并，最终变为1。
 
-## 扩展练习Challenge：硬件的可用物理内存范围的获取方法（思考题）
+## challenge3 ：硬件的可用物理内存范围的获取方法（思考题）
 >**问：如果 OS 无法提前知道当前硬件的可用物理内存范围，请问你有何办法让 OS 获取可用物理内存范围？**
 
 我们可以利用**设备树**让os获取可用物理内存范围。设备树（Device Tree Blob，DTB）是以节点（node）的形式组织起来的，每个节点可以包含若干属性（property），用于描述硬件的具体信息。此外，它通常会提供内存节点，描述物理内存的起始地址和大小。因此我们可以在操作系统启动时解析这个文件来获取硬件资源。
