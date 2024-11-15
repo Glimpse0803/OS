@@ -1025,6 +1025,23 @@ _lru_check_swap(void) {
 }
 ```
 
+在vmm.c的do_pgfault中添加如下代码：
+```c
+pte_t* temp = NULL;
+temp = get_pte(mm->pgdir, addr, 0);
+if(temp != NULL && (*temp & (PTE_V | PTE_R))) {
+    return lru_pgfault(mm, error_code, addr);
+}
+
+uint32_t perm = PTE_U;
+if (vma->vm_flags & VM_WRITE) {
+    perm |= (PTE_R | PTE_W);
+}
+
+// 在为perm设置完权限之后，移除读权限
+perm &= ~PTE_R;
+```
+
 ### 5. 算法描述
 
 #### LRU 算法的核心思想：
