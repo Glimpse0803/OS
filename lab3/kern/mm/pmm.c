@@ -17,7 +17,7 @@ struct Page *pages;
 // amount of physical memory (in pages)
 size_t npage = 0;
 // The kernel image is mapped at VA=KERNBASE and PA=info.base
-uint_t va_pa_offset;
+uint64_t va_pa_offset;
 // memory starts at 0x80000000 in RISC-V
 const size_t nbase = DRAM_BASE / PGSIZE;
 
