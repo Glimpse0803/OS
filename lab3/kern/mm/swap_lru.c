@@ -14,7 +14,6 @@ _lru_init_mm(struct mm_struct *mm)
 
     list_init(&pra_list_head);
     mm->sm_priv = &pra_list_head;
-     //cprintf(" mm->sm_priv %x in fifo_init_mm\n",mm->sm_priv);
      return 0;
 }
 
@@ -28,6 +27,7 @@ _lru_map_swappable(struct mm_struct *mm, uintptr_t addr, struct Page *page, int 
     list_add((list_entry_t*) mm->sm_priv,entry);
     return 0;
 }
+
 static int
 _lru_swap_out_victim(struct mm_struct *mm, struct Page ** ptr_page, int in_tick)
 {
@@ -43,6 +43,7 @@ _lru_swap_out_victim(struct mm_struct *mm, struct Page ** ptr_page, int in_tick)
     }
     return 0;
 }
+
 static void
 print_mm_list() {
     cprintf("--------begin----------\n");

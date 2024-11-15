@@ -839,3 +839,357 @@ Clock页替换算法和FIFO（先进先出）页替换算法都是用来决定�
 4. **缺乏细粒度控制**：
    - 分级页表可以通过不同的层次结构实现更细粒度的内存权限管理，但一个大页页表在这方面的灵活性不足。这可能导致对安全性和权限控制要求较高的系统中无法满足需要，存在潜在的安全风险。
 
+## challenge 设计文档：实现不考虑实现开销和效率的LRU页替换算法
+
+### 1. 项目背景
+
+在现代操作系统中，内存管理是一个关键的功能，尤其是在物理内存有限的情况下，如何高效地管理内存页面的交换和置换是至关重要的。本设计文档介绍了基于 **LRU（最近最少使用）** 算法的页面置换管理器的实现，该管理器用于模拟虚拟内存中页面的置换，以确保当物理内存不够时，能够高效地将不常用的页面换出到交换区。
+
+### 2. 设计目标
+
+该系统的目标是实现一个基于 **LRU** 算法的页面置换机制。LRU 算法通过维护一个页面访问顺序的链表来确定哪些页面是最久未使用的，从而决定哪些页面应该被交换出去。具体目标包括：
+- 实现一个能够管理页面交换的机制。
+- 支持页面的**访问**、**添加**、**交换**和**删除**操作。
+- 维护页面访问的顺序，选择最久未使用的页面进行置换。
+- 在发生页面缺页异常时，将访问的页面标记为可读，并更新链表顺序。
+
+### 3. 主要数据结构
+
+#### 3.1 `list_entry_t` 链表结构
+为了管理页面的置换，系统使用了一个链表结构来存储页面。每个链表节点代表一个页面，包含以下信息：
+- **页面链表指针**：用于在链表中存储页面。
+- **`pra_page_link`**：每个页面通过该链表链接到其他页面。
+
+#### 3.2 `mm_struct` 结构体
+`mm_struct` 代表每个进程的内存管理结构，其中包含指向页面置换链表的指针：
+- **`sm_priv`**：指向管理页面的链表头（`pra_list_head`），该链表保存当前进程的可交换页面。
+
+#### 3.3 `Page` 结构体
+`Page` 结构体表示内存中的一页，包含如下字段：
+- **`pra_page_link`**：用于链表中存储该页面。
+- **`pra_vaddr`**：该页面的虚拟地址。
+  
+#### 3.4 `swap_manager` 结构体
+`swap_manager` 结构体包含了所有页面置换操作的函数指针，用于实现页面置换管理，为LRU算法管理器的调用接口。具体函数包括：
+- **`init`**：初始化置换管理器。
+- **`init_mm`**：初始化每个进程的内存管理。
+- **`tick_event`**：定时器事件，用于周期性地处理页面置换。
+- **`map_swappable`**：标记某个页面为可交换的。
+- **`swap_out_victim`**：选择被置换出去的页面。
+- **`set_unswappable`**：设置某个页面为不可交换的。
+- **`check_swap`**：检查页面置换状态。
+  
+### 4. 主要功能
+
+#### 4.1 初始化和页面映射
+
+- **`_lru_init_mm`**：该函数在进程的内存管理结构 `mm_struct` 中初始化一个空的链表 `pra_list_head`，并将 `mm_struct` 的 `sm_priv` 指向该链表。
+```c
+static int
+_lru_init_mm(struct mm_struct *mm)
+{     
+
+    list_init(&pra_list_head);
+    mm->sm_priv = &pra_list_head;
+     return 0;
+}
+```
+  
+- **`_lru_map_swappable`**：该函数将指定的页面标记为可交换的页面，并将其添加到 `pra_list_head` 链表中。页面以链表条目的形式插入，表示它是可以被交换的。
+```c
+static int
+_lru_map_swappable(struct mm_struct *mm, uintptr_t addr, struct Page *page, int swap_in)
+{
+    list_entry_t *head=(list_entry_t*) mm->sm_priv;
+    list_entry_t *entry=&(page->pra_page_link);
+ 
+    assert(entry != NULL && head != NULL);
+    list_add((list_entry_t*) mm->sm_priv,entry);
+    return 0;
+}
+```
+
+#### 4.2 页面置换
+
+- **`_lru_swap_out_victim`**：该函数根据 LRU 算法选取一个页面进行置换。它通过遍历链表，从链表尾部选择最久未使用的页面（即链表的最后一个元素）。如果链表为空，则返回 `NULL`。
+```c
+static int
+_lru_swap_out_victim(struct mm_struct *mm, struct Page ** ptr_page, int in_tick)
+{
+     list_entry_t *head=(list_entry_t*) mm->sm_priv;
+        assert(head != NULL);
+    assert(in_tick==0);
+    list_entry_t* entry = list_prev(head);
+    if (entry != head) {
+        list_del(entry);
+        *ptr_page = le2page(entry, pra_page_link);
+    } else {
+        *ptr_page = NULL;
+    }
+    return 0;
+}
+```
+
+#### 4.3 页面访问和修改
+
+- **`lru_pgfault`**：该函数处理页面故障（缺页异常）。如果发生缺页，首先将所有页面标记为不可读，然后将访问的页面设置为可读，并将该页面移动到链表的头部，表示该页面是最近访问的。之所以这样是因为在加入页面时，会将新加入的页面或刚刚访问的页插入到链表头部，这样每次换出页面时只需要将链表尾部的页面取出即可。
+```c
+int lru_pgfault(struct mm_struct *mm, uint_t error_code, uintptr_t addr) {
+    cprintf("lru page fault at 0x%x\n", addr);
+    // 设置所有页面不可读
+    if(swap_init_ok) 
+        unable_page_read(mm);
+    // 将需要获得的页面设置为可读
+    pte_t* ptep = NULL;
+    ptep = get_pte(mm->pgdir, addr, 0);
+    *ptep |= PTE_R;
+    if(!swap_init_ok) 
+        return 0;
+    struct Page* page = pte2page(*ptep);
+    // 将该页放在链表头部
+    list_entry_t *head=(list_entry_t*) mm->sm_priv, *le = head;
+    while ((le = list_prev(le)) != head)
+    {
+        struct Page* curr = le2page(le, pra_page_link);
+        if(page == curr) {
+            
+            list_del(le);
+            list_add(head, le);
+            break;
+        }
+    }
+    return 0;
+}
+```
+  
+- **`unable_page_read`**：该函数遍历链表中的所有页面，将它们标记为不可读，即清除页表中的 `PTE_R` 标志位。为了知道访问了哪个页面，可以在建立页表项时将每个页面的权限全部设置为不可读，这样在访问一个页面的时候会引发缺页异常，之后将该页放到链表头部，设置页面为可读。
+```c
+static int
+unable_page_read(struct mm_struct *mm) {
+    list_entry_t *head=(list_entry_t*) mm->sm_priv, *le = head;
+    while ((le = list_prev(le)) != head)
+    {
+        struct Page* page = le2page(le, pra_page_link);
+        pte_t* ptep = NULL;
+        ptep = get_pte(mm->pgdir, page->pra_vaddr, 0);
+        *ptep &= ~PTE_R;
+    }
+    return 0;
+}
+```
+
+#### 4.4 调试功能
+
+- **`print_mm_list`**：该函数用于打印链表 `pra_list_head` 中存储的页面信息，帮助开发人员调试和验证页面访问顺序。
+
+- **`_lru_check_swap`**：该函数模拟多个页面的访问并打印每次访问后的链表状态，用于检查页面置换的正确性。通过写入特定的虚拟地址来模拟页面访问，并观察哪些页面被置换。测试样例如下：
+```c
+static int
+_lru_check_swap(void) {
+    print_mm_list();
+    cprintf("write Virt Page c in lru_check_swap\n");
+    *(unsigned char *)0x3000 = 0x0c;
+    print_mm_list();
+    cprintf("write Virt Page a in lru_check_swap\n");
+    *(unsigned char *)0x1000 = 0x0a;
+    print_mm_list();
+    cprintf("write Virt Page b in lru_check_swap\n");
+    *(unsigned char *)0x2000 = 0x0b;
+    print_mm_list();
+    cprintf("write Virt Page e in lru_check_swap\n");
+    *(unsigned char *)0x5000 = 0x0e;
+    print_mm_list();
+    cprintf("write Virt Page b in lru_check_swap\n");
+    *(unsigned char *)0x2000 = 0x0b;
+    print_mm_list();
+    cprintf("write Virt Page a in lru_check_swap\n");
+    *(unsigned char *)0x1000 = 0x0a;
+    print_mm_list();
+    cprintf("write Virt Page b in lru_check_swap\n");
+    *(unsigned char *)0x2000 = 0x0b;
+    print_mm_list();
+    cprintf("write Virt Page c in lru_check_swap\n");
+    *(unsigned char *)0x3000 = 0x0c;
+    print_mm_list();
+    cprintf("write Virt Page d in lru_check_swap\n");
+    *(unsigned char *)0x4000 = 0x0d;
+    print_mm_list();
+    cprintf("write Virt Page e in lru_check_swap\n");
+    *(unsigned char *)0x5000 = 0x0e;
+    print_mm_list();
+    cprintf("write Virt Page a in lru_check_swap\n");
+    assert(*(unsigned char *)0x1000 == 0x0a);
+    *(unsigned char *)0x1000 = 0x0a;
+    print_mm_list();
+    return 0;
+}
+```
+
+### 5. 算法描述
+
+#### LRU 算法的核心思想：
+LRU 算法的核心思想是：每次访问一个页面时，将该页面移动到链表的头部；当物理内存不足时，选择链表尾部的页面进行置换（即最久未使用的页面）。因此，链表的操作（插入、删除和移动）至关重要。
+
+- **链表的维护**：每个页面访问时，通过 **`lru_pgfault`** 函数将该页面移动到链表的头部，从而保证链表的顺序反映了页面的访问顺序。
+- **页面置换**：当需要置换页面时，选择链表尾部的页面，表示该页面是最久未使用的。
+
+### 6. 模块接口
+
+该系统提供了一个 **`swap_manager`** 结构体 `swap_manager_lru`，将各个置换函数接口组合在一起，供操作系统调用：
+```c
+struct swap_manager swap_manager_lru =
+{
+    .name            = "lru swap manager",
+    .init            = &_lru_init,
+    .init_mm         = &_lru_init_mm,
+    .tick_event      = &_lru_tick_event,
+    .map_swappable   = &_lru_map_swappable,
+    .set_unswappable = &_lru_set_unswappable,
+    .swap_out_victim = &_lru_swap_out_victim,
+    .check_swap      = &_lru_check_swap,
+}
+```
+
+### 7. 代码关键思想总结
+
+1. **如何知道谁是最近最少被使用的？**：将新加入的页面或刚刚访问的页插入到链表头部，这样每次换出页面时只需要将链表尾部的页面取出即可。
+2. **如何知道访问了哪个页面？**：可以在建立页表项时将每个页面的权限全部设置为不可读，这样在访问一个页面的时候会引发缺页异常，之后将该页放到链表头部，设置页面为可读。
+
+### 8. 扩展和优化
+
+- **性能优化**：对于较大的内存系统，LRU 算法的链表操作可能会带来一定的性能负担。可以考虑使用双向链表来优化页面的插入和删除操作。
+- **多进程支持**：当前的实现是针对单一进程的内存管理，如果需要支持多进程，可能需要对每个进程的页面置换进行独立管理。
+
+### 9. 总结
+
+本设计文档详细描述了一个基于 LRU 算法的页面置换管理器的实现，涵盖了数据结构设计、功能实现、算法描述等方面。该管理器通过链表维护页面访问顺序，实现了最久未使用页面的置换操作。
+
+### 附录：运行结果
+```
+set up init env for check_swap over!
+--------begin----------
+vaddr: 0x4000
+vaddr: 0x3000
+vaddr: 0x2000
+vaddr: 0x1000
+---------end-----------
+write Virt Page c in lru_check_swap
+Store/AMO page fault
+page fault at 0x00003000: K/W
+lru page fault at 0x3000
+--------begin----------
+vaddr: 0x3000
+vaddr: 0x4000
+vaddr: 0x2000
+vaddr: 0x1000
+---------end-----------
+write Virt Page a in lru_check_swap
+Store/AMO page fault
+page fault at 0x00001000: K/W
+lru page fault at 0x1000
+--------begin----------
+vaddr: 0x1000
+vaddr: 0x3000
+vaddr: 0x4000
+vaddr: 0x2000
+---------end-----------
+write Virt Page b in lru_check_swap
+Store/AMO page fault
+page fault at 0x00002000: K/W
+lru page fault at 0x2000
+--------begin----------
+vaddr: 0x2000
+vaddr: 0x1000
+vaddr: 0x3000
+vaddr: 0x4000
+---------end-----------
+write Virt Page e in lru_check_swap
+Store/AMO page fault
+page fault at 0x00005000: K/W
+swap_out: i 0, store page in vaddr 0x4000 to disk swap entry 5
+Store/AMO page fault
+page fault at 0x00005000: K/W
+lru page fault at 0x5000
+--------begin----------
+vaddr: 0x5000
+vaddr: 0x2000
+vaddr: 0x1000
+vaddr: 0x3000
+---------end-----------
+write Virt Page b in lru_check_swap
+Store/AMO page fault
+page fault at 0x00002000: K/W
+lru page fault at 0x2000
+--------begin----------
+vaddr: 0x2000
+vaddr: 0x5000
+vaddr: 0x1000
+vaddr: 0x3000
+---------end-----------
+write Virt Page a in lru_check_swap
+Store/AMO page fault
+page fault at 0x00001000: K/W
+lru page fault at 0x1000
+--------begin----------
+vaddr: 0x1000
+vaddr: 0x2000
+vaddr: 0x5000
+vaddr: 0x3000
+---------end-----------
+write Virt Page b in lru_check_swap
+--------begin----------
+vaddr: 0x1000
+vaddr: 0x2000
+vaddr: 0x5000
+vaddr: 0x3000
+---------end-----------
+write Virt Page c in lru_check_swap
+Store/AMO page fault
+page fault at 0x00003000: K/W
+lru page fault at 0x3000
+--------begin----------
+vaddr: 0x3000
+vaddr: 0x1000
+vaddr: 0x2000
+vaddr: 0x5000
+---------end-----------
+write Virt Page d in lru_check_swap
+Store/AMO page fault
+page fault at 0x00004000: K/W
+swap_out: i 0, store page in vaddr 0x5000 to disk swap entry 6
+swap_in: load disk swap entry 5 with swap_page in vadr 0x4000
+Store/AMO page fault
+page fault at 0x00004000: K/W
+lru page fault at 0x4000
+--------begin----------
+vaddr: 0x4000
+vaddr: 0x3000
+vaddr: 0x1000
+vaddr: 0x2000
+---------end-----------
+write Virt Page e in lru_check_swap
+Store/AMO page fault
+page fault at 0x00005000: K/W
+swap_out: i 0, store page in vaddr 0x2000 to disk swap entry 3
+swap_in: load disk swap entry 6 with swap_page in vadr 0x5000
+Store/AMO page fault
+page fault at 0x00005000: K/W
+lru page fault at 0x5000
+--------begin----------
+vaddr: 0x5000
+vaddr: 0x4000
+vaddr: 0x3000
+vaddr: 0x1000
+---------end-----------
+write Virt Page a in lru_check_swap
+Load page fault
+page fault at 0x00001000: K/R
+lru page fault at 0x1000
+--------begin----------
+vaddr: 0x1000
+vaddr: 0x5000
+vaddr: 0x4000
+vaddr: 0x3000
+---------end-----------
+```
+

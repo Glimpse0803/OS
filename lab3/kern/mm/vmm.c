@@ -332,11 +332,11 @@ volatile unsigned int pgfault_num=0;
 int
 do_pgfault(struct mm_struct *mm, uint_t error_code, uintptr_t addr) {
     
-    // pte_t* temp = NULL;
-    // temp = get_pte(mm->pgdir, addr, 0);
-    // if(temp != NULL && (*temp & (PTE_V | PTE_R))) {
-    //     return lru_pgfault(mm, error_code, addr);
-    // }
+    pte_t* temp = NULL;
+    temp = get_pte(mm->pgdir, addr, 0);
+    if(temp != NULL && (*temp & (PTE_V | PTE_R))) {
+        return lru_pgfault(mm, error_code, addr);
+    }
 
     //addr: 访问出错的虚拟地址
     int ret = -E_INVAL;
@@ -360,7 +360,7 @@ do_pgfault(struct mm_struct *mm, uint_t error_code, uintptr_t addr) {
     if (vma->vm_flags & VM_WRITE) {
         perm |= (PTE_R | PTE_W);
     }
-    // perm &= ~PTE_R;
+    perm &= ~PTE_R;
 
     addr = ROUNDDOWN(addr, PGSIZE);//按照页面大小把地址对齐
 
