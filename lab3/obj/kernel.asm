@@ -6988,17 +6988,19 @@ ffffffffc02039f2 <_lru_tick_event>:
 
 static int
 _lru_tick_event(struct mm_struct *mm)
-{ return 0; }
+{ 
+    return 0; 
+}
 ffffffffc02039f2:	4501                	li	a0,0
 ffffffffc02039f4:	8082                	ret
 
 ffffffffc02039f6 <_lru_swap_out_victim>:
-     list_entry_t *head=(list_entry_t*) mm->sm_priv;
+    list_entry_t *head=(list_entry_t*) mm->sm_priv;
 ffffffffc02039f6:	7518                	ld	a4,40(a0)
 {
 ffffffffc02039f8:	1141                	addi	sp,sp,-16
 ffffffffc02039fa:	e406                	sd	ra,8(sp)
-        assert(head != NULL);
+    assert(head != NULL);
 ffffffffc02039fc:	c731                	beqz	a4,ffffffffc0203a48 <_lru_swap_out_victim+0x52>
     assert(in_tick==0);
 ffffffffc02039fe:	e60d                	bnez	a2,ffffffffc0203a28 <_lru_swap_out_victim+0x32>
@@ -7034,16 +7036,16 @@ ffffffffc0203a28:	00002697          	auipc	a3,0x2
 ffffffffc0203a2c:	66868693          	addi	a3,a3,1640 # ffffffffc0206090 <default_pmm_manager+0x60>
 ffffffffc0203a30:	00001617          	auipc	a2,0x1
 ffffffffc0203a34:	6c060613          	addi	a2,a2,1728 # ffffffffc02050f0 <commands+0x888>
-ffffffffc0203a38:	02300593          	li	a1,35
+ffffffffc0203a38:	02400593          	li	a1,36
 ffffffffc0203a3c:	00002517          	auipc	a0,0x2
 ffffffffc0203a40:	63c50513          	addi	a0,a0,1596 # ffffffffc0206078 <default_pmm_manager+0x48>
 ffffffffc0203a44:	ebefc0ef          	jal	ra,ffffffffc0200102 <__panic>
-        assert(head != NULL);
+    assert(head != NULL);
 ffffffffc0203a48:	00002697          	auipc	a3,0x2
 ffffffffc0203a4c:	62068693          	addi	a3,a3,1568 # ffffffffc0206068 <default_pmm_manager+0x38>
 ffffffffc0203a50:	00001617          	auipc	a2,0x1
 ffffffffc0203a54:	6a060613          	addi	a2,a2,1696 # ffffffffc02050f0 <commands+0x888>
-ffffffffc0203a58:	02200593          	li	a1,34
+ffffffffc0203a58:	02300593          	li	a1,35
 ffffffffc0203a5c:	00002517          	auipc	a0,0x2
 ffffffffc0203a60:	61c50513          	addi	a0,a0,1564 # ffffffffc0206078 <default_pmm_manager+0x48>
 ffffffffc0203a64:	e9efc0ef          	jal	ra,ffffffffc0200102 <__panic>
@@ -7435,7 +7437,7 @@ ffffffffc0203e10:	00002697          	auipc	a3,0x2
 ffffffffc0203e14:	3c868693          	addi	a3,a3,968 # ffffffffc02061d8 <default_pmm_manager+0x1a8>
 ffffffffc0203e18:	00001617          	auipc	a2,0x1
 ffffffffc0203e1c:	2d860613          	addi	a2,a2,728 # ffffffffc02050f0 <commands+0x888>
-ffffffffc0203e20:	05a00593          	li	a1,90
+ffffffffc0203e20:	05c00593          	li	a1,92
 ffffffffc0203e24:	00002517          	auipc	a0,0x2
 ffffffffc0203e28:	25450513          	addi	a0,a0,596 # ffffffffc0206078 <default_pmm_manager+0x48>
 ffffffffc0203e2c:	ad6fc0ef          	jal	ra,ffffffffc0200102 <__panic>

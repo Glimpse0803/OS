@@ -31,8 +31,8 @@ _lru_map_swappable(struct mm_struct *mm, uintptr_t addr, struct Page *page, int 
 static int
 _lru_swap_out_victim(struct mm_struct *mm, struct Page ** ptr_page, int in_tick)
 {
-     list_entry_t *head=(list_entry_t*) mm->sm_priv;
-        assert(head != NULL);
+    list_entry_t *head=(list_entry_t*) mm->sm_priv;
+    assert(head != NULL);
     assert(in_tick==0);
     list_entry_t* entry = list_prev(head);
     if (entry != head) {
@@ -110,7 +110,9 @@ _lru_set_unswappable(struct mm_struct *mm, uintptr_t addr)
 
 static int
 _lru_tick_event(struct mm_struct *mm)
-{ return 0; }
+{ 
+    return 0; 
+}
 
 static int
 unable_page_read(struct mm_struct *mm) {
