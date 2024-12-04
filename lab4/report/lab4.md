@@ -1,4 +1,108 @@
 # LAB4实验报告
+
+## 练习2：为新创建的内核线程分配资源（需要编码）
+
+> 创建一个内核线程需要分配和设置好很多资源。`kernel_thread`函数通过调用`do_fork`函数完成具体内核线程的创建工作。`do_kernel`函数会调用`alloc_proc`函数来分配并初始化一个进程控制块，但`alloc_proc`只是找到了一小块内存用以记录进程的必要信息，并没有实际分配这些资源。ucore一般通过`do_fork`实际创建新的内核线程。`do_fork`的作用是，创建当前内核线程的一个副本，它们的执行上下文、代码、数据都一样，但是存储位置不同。因此，我们实际需要`fork`的东西就是`stack`和`trapframe`。在这个过程中，需要给新内核线程分配资源，并且复制原进程的状态。你需要完成在`kern/process/proc.c`中的`do_fork`函数中的处理过程。它的大致执行步骤包括：
+>
+> - 调用`alloc_proc`，首先获得一块用户信息块。
+> - 为进程分配一个内核栈。
+> - 复制原进程的内存管理信息到新进程（但内核线程不必做此事）
+> - 复制原进程上下文到新进程
+> - 将新进程添加到进程列表
+> - 唤醒新进程
+> - 返回新进程号
+>
+> 请在实验报告中简要说明你的设计实现过程。请回答如下问题：
+>
+> - 请说明ucore是否做到给每个新`fork`的线程一个唯一的`id`？请说明你的分析和理由。
+
+### 函数设计实现
+
+根据指导书中给出的执行步骤，实现步骤如下：
+
+1. 调用`alloc_proc`函数，分配并初始化进程控制块；主要工作是通过`kmalloc`函数获得`proc_struct`结构的一块内存块，并把`proc`进行初步初始化。如果没有成功，跳转至`fork_out`处做对应的出错处理。
+
+   ```c
+   proc = alloc_proc(); // 分配并初始化进程控制块
+   if (proc == NULL)
+   {
+       goto fork_out;
+   }
+   ```
+
+2. 调用`setup_kstack`函数，分配并初始化内核栈。主要工作是调用 `alloc_pages` 函数来分配指定大小的页面，然后将分配的页面的虚拟地址赋给进程的 `kstack` 字段，表示该页面是进程的内核栈。如果分配成功，函数返回0表示成功，否则返回错误码 -E_NO_MEM 表示内存不足。如果内存不足，跳转至`bad_fork_cleanup_kstack`处做对应的出错处理。
+
+   ```c
+   ret = setup_kstack(proc); // 分配并初始化内核栈
+   if (ret == -E_NO_MEM)
+   {
+       goto bad_fork_cleanup_kstack;
+   }
+   ```
+
+3. 调用`copy_mm`函数，根据`clone_flags`决定是复制还是共享内存管理系统。由于目前在实验四中只能创建内核线程，所以`copy_mm`中不执行任何操作。
+
+   ```c
+   copy_mm(clone_flags, proc);
+   ```
+
+4. 调用`copy_thread`函数设置进程的中断帧和上下文。
+
+   ```c
+   copy_thread(proc, stack, tf);
+   ```
+
+5. 调用`get_pid`函数，为新进程分配PID。
+
+   ```c
+   const int pid = get_pid();
+   proc->pid = pid;
+   ```
+
+6. 把设置好的进程加入进程链表，计算PID哈希值并加入到对应的哈希表。
+
+   ```c
+   list_add(hash_list + pid_hashfn(pid), &(proc->hash_link));
+   list_add(&proc_list, &(proc->list_link));
+   ```
+
+7. 调用`wakeup_pro`函数，将新建的进程设为就绪态。
+
+   ```c
+   wakeup_proc(proc);
+   ```
+
+8. 总进程数加1。
+
+   ```c
+   nr_process++;
+   ```
+
+9. 将返回值设为线程id。
+
+   ```c
+   ret = pid;
+   ```
+
+### 问题回答
+
+> 请说明ucore是否做到给每个新`fork`的线程一个唯一的`id`？请说明你的分析和理由。
+
+ucore调用`get_pid`函数，为每个新线程分配PID，而分析`get_pid`的实现可知，它会返回一个唯一的未被使用的PID。
+
+`get_pid`函数的基本思想是遍历进程列表，在遍历时维护一个区间`[last_pid,next_safe)`，一直保证此区间内始终为未使用的PID。具体方法如下：
+
+
+- 首次调用时初始化**静态变量**`last_pid`与`next_safe`为最大PID`MAX_PID`，之后的调用会保留上一次调用结束时的值，之后每次调用时`last_pid`的意义是上次分配的PID。
+- 如果`++last_pid`小于`next_safe`，直接分配`last_pid`；
+- 如果`last_pid`大于等于`MAX_PID`，超出范围了，将`last_pid`重置为1；
+- 如果`last_pid`大于等于`MAX_PID`或者`last_pid`大于等于`MAX_PID`，将`next_safe`置为`MAX_PID`，扩张区间范围，在后面的遍历中限缩。接下来就遍历进程链表，获取每个进程的已分配的PID：
+  - 如果发现有进程的PID等于`last_pid`，则表明冲突，则增加`last_pid`，就是将区间右移一个。这确保了没有一个进程的`pid`与`last_pid`重合；
+  - 如果发现一个进程的PID大于`last_pid`且小于`next_safe`，则将这个进程的PID赋值给`next_safe`，即缩小`next_safe`的范围。这能够保证遍历到目前来说`[last_pid,next_safe)`之间没有已用的PID；
+  - 如果在遍历中，`last_pid>=next_safe`，需要将`next_safe`扩张到`MAX_PID`，形成新区间并继续在后面的遍历中限缩。
+    - 如果在遍历中，`last_pid`还超出了`MAX_PID`，则还需要将`last_pid`重置为1，继续在后面的遍历中限缩区间。
+
+通过以上的处理，能够保证最终`[last_pid,next_safe)`区间范围内为可用PID。返回`last_pid`即为为新进程分配的唯一PID。
 ## 练习三
 ### 代码实现
 根据文档的提示与说明，我们参考schedule函数里面的禁止和启用中断的过程，编写代码如下：
