@@ -338,6 +338,7 @@ init_main(void *arg) {
 
 // proc_init - set up the first kernel thread idleproc "idle" by itself and 
 //           - create the second kernel thread init_main
+// 完成了idleproc内核线程和initproc内核线程的创建或复制工作
 void
 proc_init(void) {
     int i;
@@ -391,8 +392,8 @@ proc_init(void) {
 }
 
 // cpu_idle - at the end of kern_init, the first kernel thread idleproc will do below works
-void
-cpu_idle(void) {
+// 调度点
+void cpu_idle(void) {
     while (1) {
         if (current->need_resched) {
             schedule();
