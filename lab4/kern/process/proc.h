@@ -39,16 +39,16 @@ struct context {
 extern list_entry_t proc_list;
 
 struct proc_struct {
-    enum proc_state state;                      // Process state
+    enum proc_state state;                      // 进程所处的状态。uCore中进程状态有四种：分别是PROC_UNINIT、PROC_SLEEPING、PROC_RUNNABLE、PROC_ZOMBIE
     int pid;                                    // Process ID
     int runs;                                   // the running times of Proces
     uintptr_t kstack;                           // Process kernel stack
     volatile bool need_resched;                 // bool value: need to be rescheduled to release CPU?
-    struct proc_struct *parent;                 // the parent process
-    struct mm_struct *mm;                       // Process's memory management field
-    struct context context;                     // Switch here to run process
-    struct trapframe *tf;                       // Trap frame for current interrupt
-    uintptr_t cr3;                              // CR3 register: the base addr of Page Directroy Table(PDT)
+    struct proc_struct *parent;                 // 保存了进程的父进程的指针
+    struct mm_struct *mm;                       // 这里面保存了内存管理的信息，包括内存映射，虚存管理等内容。
+    struct context context;                     // 保存了进程执行的上下文（包含了ra，sp，s0~s11共14个寄存器）
+    struct trapframe *tf;                       // 保存了进程的中断帧
+    uintptr_t cr3;                              // CR3 register: x86架构的特殊寄存器，用来保存页表所在的基址
     uint32_t flags;                             // Process flag
     char name[PROC_NAME_LEN + 1];               // Process name
     list_entry_t list_link;                     // Process link list 

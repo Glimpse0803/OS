@@ -58,7 +58,54 @@ SYS_getpid      : get the process's pid
 
 */
 
+/* ------------- 进程/线程机制设计与实现 -------------
+（简化版的 Linux 进程/线程机制）
+简介：
+  ucore 实现了一个简单的进程/线程机制。进程包含独立的内存空间，至少一个线程用于执行，内核数据（用于管理）、处理器状态（用于上下文切换）、文件（在 lab6 中）等。ucore 需要高效地管理所有这些细节。在 ucore 中，线程只是进程的一种特殊形式（共享进程的内存）。
+------------------------------
+进程状态        :        含义               -- 原因
+    PROC_UNINIT     :   未初始化               -- alloc_proc
+    PROC_SLEEPING   :   睡眠中                -- try_free_pages, do_wait, do_sleep
+    PROC_RUNNABLE   :   可运行（可能在运行中） -- proc_init, wakeup_proc
+    PROC_ZOMBIE     :   几乎死亡              -- do_exit
+
+-----------------------------
+进程状态变化：
+                                           
+  alloc_proc                                 RUNNING
+      +                                   +--<----<--+
+      +                                   + proc_run +
+      V                                   +-->---->--+ 
+PROC_UNINIT -- proc_init/wakeup_proc --> PROC_RUNNABLE -- try_free_pages/do_wait/do_sleep --> PROC_SLEEPING --
+                                           A      +                                                           +
+                                           |      +--- do_exit --> PROC_ZOMBIE                                +
+                                           +                                                                  + 
+                                           -----------------------wakeup_proc---------------------------------- 
+-----------------------------
+进程关系：
+父进程：           proc->parent  (proc 是子进程)
+子进程：           proc->cptr    (proc 是父进程)
+年长兄弟进程：     proc->optr    (proc 是较年轻的兄弟进程)
+年幼兄弟进程：     proc->yptr    (proc 是较年长的兄弟进程)
+-----------------------------
+与进程相关的系统调用：
+SYS_exit        : 进程退出,                           --> do_exit
+SYS_fork        : 创建子进程，复制内存管理信息       --> do_fork --> wakeup_proc
+SYS_wait        : 等待进程结束                        --> do_wait
+SYS_exec        : 进程执行程序（在 fork 后）          --> 加载程序并刷新内存管理
+SYS_clone       : 创建子线程                         --> do_fork --> wakeup_proc
+SYS_yield       : 进程表示自己需要重新调度           -- proc->need_sched = 1, 然后调度器将重新调度此进程
+SYS_sleep       : 进程进入睡眠                       --> do_sleep 
+SYS_kill        : 终止进程                           --> do_kill --> proc->flags |= PF_EXITING
+                                                                 --> wakeup_proc --> do_wait --> do_exit   
+SYS_getpid      : 获取进程的 pid
+*/
+
+
+
 // the process set's list
+// 所有进程控制块的双向线性列表，proc_struct中的成员变量list_link将链接入这个链表中
+// (用来增删改查的那个)
 list_entry_t proc_list;
 
 #define HASH_SHIFT          10
@@ -66,13 +113,17 @@ list_entry_t proc_list;
 #define pid_hashfn(x)       (hash32(x, HASH_SHIFT))
 
 // has list for process set based on pid
+// 所有进程控制块的哈希表，proc_struct中的成员变量hash_link将基于pid链接入这个哈希表中
+// 为了加速基于进程 ID（PID）查找特定进程控制块的操作
 static list_entry_t hash_list[HASH_LIST_SIZE];
 
 // idle proc
 struct proc_struct *idleproc = NULL;
 // init proc
+// lab4中，指向一个内核线程
 struct proc_struct *initproc = NULL;
 // current proc
+// 当前占用CPU且处于“运行”状态进程控制块指针。
 struct proc_struct *current = NULL;
 
 static int nr_process = 0;
