@@ -1,5 +1,139 @@
 # LAB5实验报告
 
+## 练习 0：填写已有实验
+
+由于Lab5在进程控制块`proc_sturct`中加入了`exit_code`、`wait_state`以及标识线程之间父子关系的链表节点`*cptr`, `*yptr`, `*optr`。
+
+```c
+// kern/process/proc.h
+int exit_code;   // 退出码，当前线程退出时的原因(在回收子线程时会发送给父线程)
+uint32_t wait_state;  // 等待状态
+// cptr即child ptr，当前线程子线程(链表结构)
+// yptr即younger sibling ptr；
+// optr即older sibling ptr;
+// cptr为当前线程的子线程双向链表头结点，通过yptr和optr可以找到关联的所有子线程
+struct proc_struct *cptr, *yptr, *optr; // 进程之间的关系
+```
+
+因此，分配进程控制块的`alloc_proc`函数有所改变：
+
+```c
+// 新增的两行
+proc->wait_state = 0;  // PCB 新增的条目，初始化进程等待状态
+proc->cptr = proc->optr = proc->yptr = NULL; //指针初始化
+```
+
+而在`do_fork`函数中，还需要设置进程之间的关系，直接调用`set_links`函数即可。
+
+```c
+// do_fork 函数新增
+set_links(proc);  // 设置进程链接
+```
+
+`set_links`函数将进程加入进程链表，设置进程关系，并将`nr_process`加1。
+
+```c
+static void set_links(struct proc_struct *proc) {
+    list_add(&proc_list,&(proc->list_link)); // 进程加入进程链表
+    proc->yptr = NULL;  // 当前进程的 younger sibling 为空
+    if ((proc->optr = proc->parent->cptr) != NULL) {
+        proc->optr->yptr = proc;  // 当前进程的 older sibling 为当前进程
+    }
+    proc->parent->cptr = proc;  // 父进程的子进程为当前进程
+    nr_process ++;  //进程数加一
+}
+```
+
+## 练习 1：加载应用程序并执行（需要编码）
+
+> **do_execv**函数调用`load_icode`（位于kern/process/proc.c中）来加载并解析一个处于内存中的ELF执行文件格式的应用程序。你需要补充`load_icode`的第6步，建立相应的用户内存空间来放置应用程序的代码段、数据段等，且要设置好`proc_struct`结构中的成员变量trapframe中的内容，确保在执行此进程后，能够从应用程序设定的起始执行地址开始执行。需设置正确的trapframe内容。
+>
+> 请在实验报告中简要说明你的设计实现过程。
+>
+> - 请简要描述这个用户态进程被ucore选择占用CPU执行（RUNNING态）到具体执行应用程序第一条指令的整个经过。
+
+### （一）设计实现过程
+
+`load_icode`的六步工作内容如下：
+
+- 第一步：为当前进程创建一个新的 `mm` 结构
+- 第二步：创建一个新的页目录表（`PDT`），并将` mm->pgdir `设置为页目录表的内核虚拟地址。
+- 第三步：构建二进制的 `BSS` 部分到进程的内存空间
+- 第四步：构建用户栈内存
+- 第五步： 设置当前进程的 `mm`、`sr3`，并设置 `CR3` 寄存器为页目录表的物理地址
+- 第六步：为用户环境设置 `trapframe`。框架代码已经保存中断前的`sstatus`寄存器。
+
+在第六步中，我们需要设置 `tf->gpr.sp`， `tf->epc`以及 `tf->status`。
+
+-  `tf->gpr.sp`：用户进程的栈指针。每个用户进程会有两个栈，一个内核栈一个用户栈，在这里我们使用`kern\mm\memlayout.h`中的宏定义`USTACKTOP`即用户栈的顶部赋值给sp寄存器。
+-  `tf->epc`：用户程序的入口点。在`ELF`格式中，文件头部的结构体`elfhdr`中有一个字段`e_entry`表示可执行文件的入口点，我们将其赋值给`epc`作为用户程序的入口点。
+-  `tf->status`：用户程序中需要修改status寄存器的`SPP`位与`SPIE`位。`SPP`记录的是在中断之前处理器的特权级别，0表示`U-Mode`，1表示`S-Mode`。`SPIE`位记录的是在中断之前中断是否开启，0表示中断开启，1表示中断关闭。我们的目的是让CPU进入`U_mode`执行`do_execve()`加载的用户程序，在返回时要通过`SPP`位回到用户模式，因此需要把`SSTATUS_SPP`置0。默认中断返回后，用户态执行时是开中断的，因此`SPIE`位也要置零。总结来说我们需要把保留的中断前的寄存器`sstatus`中的`SSTATUS_SPP`以及`SSTATUS_SPIE`位清零。
+
+最终我们编写的代码如下：
+
+```C
+tf->gpr.sp = USTACKTOP;//设置用户态的栈顶指针  
+tf->epc = elf->e_entry;//设置系统调用中断返回后执行的程序入口为elf头中设置的e_entry
+tf->status = sstatus & ~(SSTATUS_SPP | SSTATUS_SPIE);//设置sstatus寄存器清零SSTATUS_SPP位和SSTATUS_SPIE位
+```
+
+### （二）过程简述
+
+本实验中第一个用户进程是由第二个内核线程`initproc`通过把应用程序执行码覆盖到`initproc`的用户虚拟内存空间来创建的。
+
+（1）`kern\process\proc.c\init_main`中使用`kernel_thread`函数创建了一个子线程`user_main`。内核线程`initproc`在创建完成用户态进程`userproc`后调用了`do_wait`函数，`do_wait`检测到存在`RUNNABLE`的子进程后，调用`schedule`函数。
+
+（2）`schedule`函数从进程链表中选中该`PROC_RUNNABLE`态的进程，调用`proc_run()`函数运行该进程。
+
+（3）进入`user_main`线程后，通过宏`KERNEL_EXECVE`宏定义调用`__KERNEL_EXECVE`函数，从中调用`kernel_execve`函数。首先将系统调用号、函数名称、函数长度、代码地址、代码大小存储在寄存器中。由于目前我们在S mode下，所以不能通过`ecall`来产生中断，只能通过设置`a7`寄存器的值为`10`后用`ebreak`产生断点中断转发到`syscall()`来实现在内核态使用系统调用。之后将存储在`a0`寄存器中的系统调用号作为返回值返回。
+
+（4）当`ucore`收到此系统调用后，首先进入`kern\trap\trapentry.S`中的`_alltraps`保存当前的寄存器状态，然后跳转到`trap`函数中根据发生的陷阱类型进行分发。`trap_dispatch`根据`tf->cause`将处理任务分发给`exception_handler`，之后根据寄存器`a7`的值为`10`调用函数`syscall()`。
+
+（5）在内核态的函数`syscall()`中通过`trapframe`读取寄存器的值，将系统调用号以及其他参数传给函数指针的数组syscalls。
+
+（6）在调用过程中`syscalls=SYS_exec`，因此会调用函数`sys_exec`。函数`sys_exec`对于四个参数进行处理后调用函数`do_execve(name, len, binary, size)`。
+
+（7）`do_execve()`函数中首先替换掉当前线程中的`mm_struct`为加载新的执行码做好用户态内存空间清空准备，之后调用`load_icode()`函数把新的程序加载到当前进程，并设置好进程名字。
+
+（8）回到`exception_handler()`函数中更新内核栈位置，然后回到`__trapret`函数中将寄存器设置为应用进程的相关状态，当`__trapret`执行iret指令时就会跳转到应用程序的入口中，并且特权级也由内核态跳转到用户态，接下来就开始执行用户程序的第一条指令。
+
+
+## 练习2：父进程复制自己的内存空间给子进程(需要编码)
+
+> 创建子进程的函数`do_fork`在执行中将拷贝当前进程(即父进程)的用户内存地址空间中的合法内容到新进程中(子进程)，完成内存资源的复制。具体是通过`copy_range`函数(位于`kern/mm/pmm.c`中)实现的，请补充`copy_range`的实现，确保能够正确执行。
+>
+> 请在实验报告中简要说明你的设计实现过程。
+>
+> - 如何设计实现`Copy on Write`机制？给出概要设计，鼓励给出详细设计。
+
+`Copy on Write`机制见Challenge部分。
+
+在`do_fork`函数中，通过调用`copy_mm`来执行内存空间的复制。在这一过程中，进一步调用了`dup_mmap`函数，该函数的核心操作是遍历父进程的所有合法虚拟内存空间，然后将这些空间的内容复制到子进程的内存空间中。具体而言，这一内存复制的实现是通过`copy_range`函数完成的。
+
+`copy_range`函数的执行流程具体包括遍历父进程指定的某一段内存空间中的每一个虚拟页。在存在虚拟页的情况下，为子进程相同地址申请分配一个物理页，接着将父进程虚拟页中的所有内容复制到新分配的物理页中。随后，建立子进程的这个物理页和对应的虚拟地址之间的映射关系。
+
+练习需要完成的部分是复制页面的内容到子进程需要被填充的物理页`npage`，建立`npage`的物理地址到线性地址`start`的映射。步骤如下：
+
+1. 使用宏`page2kva(page)`  找到父进程需要复制的物理页的内核虚拟地址；
+2. 使用宏`page2kva(npage)` 找到子进程需要被填充的物理页的内核虚拟地址；
+3. 使用`memcpy(kva_dst, kva_src, PGSIZE)`将父进程的物理页的内容复制到子进程中去；
+4. 通过`page_insert(to, npage, start, perm)`建立子进程的物理页与虚拟页的映射关系。
+
+代码如下：
+
+```c
+void *kva_src = page2kva(page); 
+void *kva_dst = page2kva(npage); 
+memcpy(kva_dst, kva_src, PGSIZE); 
+ret = page_insert(to, npage, start, perm);
+```
+
+完成所有编码后，`make grade`输出截图：
+
+![alt text](image-1.png)
+
+![alt text](image.png)
+
 ## 练习3: 阅读分析源代码，理解进程执行 fork/exec/wait/exit 的实现，以及系统调用的实现（不需要编码）
 >请在实验报告中简要说明你对 fork/exec/wait/exit函数的分析。并回答如下问题：
 >
@@ -605,6 +739,145 @@ int do_exit(int error_code) {
 
 ![alt text](1.jpg)
 
+
+## 扩展练习 Challenge1
+
+> 实现 Copy on Write （COW）机制
+>
+> 给出实现源码，测试用例和设计报告（包括在cow情况下的各种状态转换（类似有限状态自动机）的说明）。
+>
+> 这个扩展练习涉及到本实验和上一个实验“虚拟内存管理”。请在ucore中实现这样的COW机制。
+>
+> 由于COW实现比较复杂，容易引入bug，请参考 https://dirtycow.ninja/ 看看能否在ucore的COW实现中模拟这个错误和解决方案。需要有解释。
+
+COW基本机制为：在ucore操作系统中，当一个用户父进程创建自己的子进程时，父进程会把其申请的用户空间设置为只读，子进程可共享父进程占用的用户内存空间中的页面（这就是一个共享的资源）。当其中任何一个进程修改此用户内存空间中的某页面时，ucore会通过page fault异常获知该操作，并完成拷贝内存页面，使得两个进程都有各自的内存页面。这样一个进程所做的修改不会被另外一个进程可见了。
+
+在`do_fork`函数中，内存复制通过调用`copy_mm`函数、进而调用`do_range`函数实现。`do_range`函数根据传入的参数`share`决定是否进行内存复制或共享。
+
+如果`share`为0，则完整拷贝内存，与之前代码一致；如果`share`为1，则使用COW机制，进行物理页面共享，在两个进程页目录表中加入共享页面的映射关系，并设置只读。
+
+```c
+page_insert(from, page, start, perm & ~PTE_W);
+ret = page_insert(to, page, start, perm & ~PTE_W);
+```
+
+当其中任何一个进程修改此用户内存空间中的某页面时，由于PTE上的`PTE_W`为0，所以会触发缺页异常。此时需要通过`page fault`异常获知该操作，并完成拷贝内存页面，使得两个进程都有各自的内存页面。
+
+在`do_pgfault`函数内，会尝试获取这个地址对应的页表项，如果页表项不为空，且页表项有效，这说明缺页异常是因为试图在只读页面中写入而引起的。
+
+在这种情况下，如果试图写入的只读页面只被一个进程使用，重设权限`PTE_W`为1并插入映射即可；
+
+而如果被多个进程使用，需要调用`pgdir_alloc_page`函数，在该函数内分配页面并设置新地址映射。之后，将数据拷贝到新分配的页中，并将其加入全局虚拟内存交换管理器的管理。
+
+```c
+if (*ptep & PTE_V)
+{
+    cprintf("\n\nCOW: ptep 0x%x, pte 0x%x\n", ptep, *ptep);
+    // 只读物理页
+    page = pte2page(*ptep);
+    // 如果该物理页面被多个进程引用
+    if (page_ref(page) > 1)
+    {
+        // 分配页面并设置新地址映射
+        // pgdir_alloc_page -> alloc_page()  page_insert()
+        struct Page *newPage = pgdir_alloc_page(mm->pgdir, addr, perm);
+        void *kva_src = page2kva(page);
+        void *kva_dst = page2kva(newPage);
+        // 拷贝数据
+        memcpy(kva_dst, kva_src, PGSIZE);
+    }
+    // 如果该物理页面只被当前进程所引用
+    else
+    { 
+        // page_insert，保留当前物理页，重设其PTE权限
+        page_insert(mm->pgdir, page, addr, perm);
+    }
+}
+else
+{
+    // Lab 3 中的代码
+    // 页面被交换到了磁盘中
+    // 将线性地址对应的物理页数据从磁盘交换到物理内存
+}
+swap_map_swappable(mm, addr, page, 1);
+page->pra_vaddr = addr;
+```
+
+`make qemu`输出如下，验证了COW的正确性。
+
+![image.png](https://s2.loli.net/2023/12/06/QIPBjC3bKxdgSvc.png)
+
+### COW机制状态转换
+
+1. **共享状态 (Shared State)**  
+   这是对象或内存页的初始状态。多个进程或线程共享同一份数据，并且该数据是只读的。此时，数据的所有者并没有进行修改。  
+   - 状态：**Shared**
+   - 特征：多个读者可以同时访问此数据。
+
+2. **被请求修改状态 (Requested for Modification)**  
+   当某个进程或线程需要修改该共享数据时，数据仍然是共享状态，但该进程或线程已经请求了对数据的修改。  
+   - 状态：**Requested for Modification**
+   - 特征：该进程或线程正在尝试修改数据，其他进程继续可以读。
+
+3. **复制状态 (Copying/Copy)**
+   当一个进程决定修改共享数据时，它首先会复制一份该数据，然后在自己的副本上进行修改。这时，数据会从共享状态转换为该进程独享副本的状态。  
+   - 状态：**Copy**
+   - 特征：该进程获得了数据的独立副本，并可以修改副本，其他进程仍然访问共享的原数据。
+
+4. **独占修改状态 (Exclusive Modification)**  
+   一旦数据副本被修改完毕，进程便开始在独占的修改状态下工作，数据的副本已经不再共享，其他进程无法继续修改原数据。  
+   - 状态：**Exclusive**
+   - 特征：该进程拥有该数据的独占访问权限，并且其他进程不能修改该副本的数据。
+
+5. **释放/共享回归状态 (Released/Back to Shared)**  
+   修改完成后，某些情况下该数据副本可以被释放，或者经过其他进程的重新共享，使得数据恢复为共享状态。这取决于实现，可能会将修改的数据复制到原始共享区域，或者新副本保持在修改状态直到完全释放。  
+   - 状态：**Released or Back to Shared**
+   - 特征：数据可能重新回到共享状态，允许其他进程继续共享和访问。
+
+### 状态转换过程
+
+1. **初始化状态：**  
+   - 所有进程都进入共享状态，数据可读且只读。
+
+2. **第一次修改请求：**  
+   - 进程发起修改请求时，进入“请求修改”状态，但数据仍处于共享状态。
+
+3. **数据复制：**  
+   - 当进程决定修改数据时，会触发数据的复制动作，进入复制状态。进程获得该数据的独立副本，进入独占状态。
+
+4. **独占修改：**  
+   - 修改完成后，数据进入独占修改状态，进程拥有该数据的独立副本并对其进行修改。
+
+5. **数据释放/共享回归：**  
+   - 如果修改完成并且数据不再需要被独占，数据可能会恢复到共享状态，允许其他进程访问。
+
+### 状态转换的简要表
+
+| 当前状态               | 操作                         | 下一状态           | 描述                             |
+|------------------------|------------------------------|--------------------|----------------------------------|
+| **Shared**             | 请求修改                     | Requested for Modification | 进程请求修改数据，数据仍共享。        |
+| **Requested for Modification** | 复制数据                  | Copy               | 数据被复制，进入独占状态。            |
+| **Copy**               | 完成修改                     | Exclusive          | 数据被修改，进入独占状态。            |
+| **Exclusive**          | 修改完成                     | Released / Shared  | 修改完成，数据可以被共享或释放。    |
+
+
+通过 COW 机制，可以显著提高内存和资源利用率，减少不必要的复制操作，从而提升系统性能。
+
+
+
+### CVE-2016-5195 (Dirty COW) Linux本地提权漏洞
+
+该漏洞是Linux中`get_user_page`内核函数在处理`Copy-on-Write`的过程中，可能产出竞态条件造成COW过程被破坏，导致出现写数据到进程地址空间内只读内存区域的机会。
+
+结合Linux源码分析漏洞产生的原因。
+
+当用`mmap`去映射文件到内存区域时使用了`MAP_PRIVATE`标记，写文件时会写到COW机制产生的内存区域中，原文件不受影响。其中获取用户进程内存页的过程如下：
+
+1. 第一次调用`follow_page_mask`查找虚拟地址对应的page，带有`FOLL_WRITE`标记。因为所在page不在内存中，`follow_page_mask`返回NULL，第一次失败；进入`faultin_page`，最终进入`do_cow_fault`分配不带`_PAGE_RW`标记的匿名内存页，返回值为0。
+2. 重新开始循环，第二次调用`follow_page_mask`，带有`FOLL_WRITE`标记。由于不满足`((flags & FOLL_WRITE) && !pte_write(pte))`条件，`follow_page_mask`返回NULL，第二次失败，进入`faultin_page`，最终进入`do_wp_page`函数分配COW页。并在上级函数`faultin_page`中去掉`FOLL_WRITE`标记，返回0。
+3. 重新开始循环，第三次调用`follow_page_mask`，不带`FOLL_WRITE`标记。成功得到page。
+
+`__get_user_pages`函数中每次查找page前会先调用`cond_resched()`线程调度一下，这样就引入了竞态条件的可能性。在第二次分配COW页成功后，`FOLL_WRITE`标记已经去掉，如果此时，另一个线程把page释放了，那么第三次由于page不在内存中，又会进行调页处理，由于不带`FOLL_WRITE`标记，不会进行COW操作，而会直接返回之前的**只读物理页**的地址，之后该**只读**页被添加到page数组，并在接下来的操作中被**成功修改**。
 
 ## 扩展练习 Challenge2
 >说明该用户程序是何时被预先加载到内存中的？与我们常用操作系统的加载有何区别，原因是什么？
