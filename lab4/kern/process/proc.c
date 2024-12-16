@@ -187,12 +187,17 @@ get_proc_name(struct proc_struct *proc) {
 }
 
 // get_pid - alloc a unique pid for process
-static int
-get_pid(void) {
+// 分配一个唯一的 PID 给新的进程
+static int get_pid(void) {
+    // 如果 MAX_PID 小于等于 MAX_PROCESS，编译时会报错。这是为了确保每个进程都有一个唯一的 PID
     static_assert(MAX_PID > MAX_PROCESS);
     struct proc_struct *proc;
     list_entry_t *list = &proc_list, *le;
+
+    // last_pid 用来跟踪上一个分配的 PID。
+    // next_safe 用于标记下一个可以安全分配的 PID。
     static int next_safe = MAX_PID, last_pid = MAX_PID;
+
     if (++ last_pid >= MAX_PID) {
         last_pid = 1;
         goto inside;
@@ -435,6 +440,7 @@ proc_init(void) {
         list_init(hash_list + i);
     }
 
+    // 通过alloc_proc创建线程
     if ((idleproc = alloc_proc()) == NULL) {
         panic("cannot alloc idleproc.\n");
     }

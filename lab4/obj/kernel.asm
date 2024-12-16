@@ -8632,7 +8632,7 @@ ffffffffc020460e:	00002697          	auipc	a3,0x2
 ffffffffc0204612:	61268693          	addi	a3,a3,1554 # ffffffffc0206c20 <default_pmm_manager+0xe8>
 ffffffffc0204616:	00001617          	auipc	a2,0x1
 ffffffffc020461a:	3c260613          	addi	a2,a2,962 # ffffffffc02059d8 <commands+0x870>
-ffffffffc020461e:	13900593          	li	a1,313
+ffffffffc020461e:	13e00593          	li	a1,318
 ffffffffc0204622:	00002517          	auipc	a0,0x2
 ffffffffc0204626:	61650513          	addi	a0,a0,1558 # ffffffffc0206c38 <default_pmm_manager+0x100>
 ffffffffc020462a:	b9ffb0ef          	jal	ra,ffffffffc02001c8 <__panic>
@@ -8710,7 +8710,7 @@ ffffffffc02046c6:	1141                	addi	sp,sp,-16
     panic("process exit!!.\n");
 ffffffffc02046c8:	00002617          	auipc	a2,0x2
 ffffffffc02046cc:	58860613          	addi	a2,a2,1416 # ffffffffc0206c50 <default_pmm_manager+0x118>
-ffffffffc02046d0:	19e00593          	li	a1,414
+ffffffffc02046d0:	1a300593          	li	a1,419
 ffffffffc02046d4:	00002517          	auipc	a0,0x2
 ffffffffc02046d8:	56450513          	addi	a0,a0,1380 # ffffffffc0206c38 <default_pmm_manager+0x100>
 do_exit(int error_code) {
@@ -8752,6 +8752,7 @@ ffffffffc0204712:	fef71de3          	bne	a4,a5,ffffffffc020470c <proc_init+0x2a>
         list_init(hash_list + i);
     }
 
+    // 通过alloc_proc创建线程
     if ((idleproc = alloc_proc()) == NULL) {
 ffffffffc0204716:	b73ff0ef          	jal	ra,ffffffffc0204288 <alloc_proc>
 ffffffffc020471a:	00011917          	auipc	s2,0x11
@@ -8966,14 +8967,14 @@ ffffffffc02048be:	bfb9                	j	ffffffffc020481c <proc_init+0x13a>
         panic("cannot alloc idleproc.\n");
 ffffffffc02048c0:	00002617          	auipc	a2,0x2
 ffffffffc02048c4:	3a860613          	addi	a2,a2,936 # ffffffffc0206c68 <default_pmm_manager+0x130>
-ffffffffc02048c8:	1b700593          	li	a1,439
+ffffffffc02048c8:	1bd00593          	li	a1,445
 ffffffffc02048cc:	00002517          	auipc	a0,0x2
 ffffffffc02048d0:	36c50513          	addi	a0,a0,876 # ffffffffc0206c38 <default_pmm_manager+0x100>
 ffffffffc02048d4:	8f5fb0ef          	jal	ra,ffffffffc02001c8 <__panic>
         panic("create init_main failed.\n");
 ffffffffc02048d8:	00002617          	auipc	a2,0x2
 ffffffffc02048dc:	3d860613          	addi	a2,a2,984 # ffffffffc0206cb0 <default_pmm_manager+0x178>
-ffffffffc02048e0:	1d700593          	li	a1,471
+ffffffffc02048e0:	1dd00593          	li	a1,477
 ffffffffc02048e4:	00002517          	auipc	a0,0x2
 ffffffffc02048e8:	35450513          	addi	a0,a0,852 # ffffffffc0206c38 <default_pmm_manager+0x100>
 ffffffffc02048ec:	8ddfb0ef          	jal	ra,ffffffffc02001c8 <__panic>
@@ -8982,7 +8983,7 @@ ffffffffc02048f0:	00002697          	auipc	a3,0x2
 ffffffffc02048f4:	41068693          	addi	a3,a3,1040 # ffffffffc0206d00 <default_pmm_manager+0x1c8>
 ffffffffc02048f8:	00001617          	auipc	a2,0x1
 ffffffffc02048fc:	0e060613          	addi	a2,a2,224 # ffffffffc02059d8 <commands+0x870>
-ffffffffc0204900:	1de00593          	li	a1,478
+ffffffffc0204900:	1e400593          	li	a1,484
 ffffffffc0204904:	00002517          	auipc	a0,0x2
 ffffffffc0204908:	33450513          	addi	a0,a0,820 # ffffffffc0206c38 <default_pmm_manager+0x100>
 ffffffffc020490c:	8bdfb0ef          	jal	ra,ffffffffc02001c8 <__panic>
@@ -8991,7 +8992,7 @@ ffffffffc0204910:	00002697          	auipc	a3,0x2
 ffffffffc0204914:	3c868693          	addi	a3,a3,968 # ffffffffc0206cd8 <default_pmm_manager+0x1a0>
 ffffffffc0204918:	00001617          	auipc	a2,0x1
 ffffffffc020491c:	0c060613          	addi	a2,a2,192 # ffffffffc02059d8 <commands+0x870>
-ffffffffc0204920:	1dd00593          	li	a1,477
+ffffffffc0204920:	1e300593          	li	a1,483
 ffffffffc0204924:	00002517          	auipc	a0,0x2
 ffffffffc0204928:	31450513          	addi	a0,a0,788 # ffffffffc0206c38 <default_pmm_manager+0x100>
 ffffffffc020492c:	89dfb0ef          	jal	ra,ffffffffc02001c8 <__panic>
@@ -9049,6 +9050,7 @@ ffffffffc020497a:	84ffb0ef          	jal	ra,ffffffffc02001c8 <__panic>
 ffffffffc020497e <schedule>:
 }
 
+// 用于实现操作系统的进程调度
 void schedule(void) {
 ffffffffc020497e:	1141                	addi	sp,sp,-16
 ffffffffc0204980:	e406                	sd	ra,8(sp)
@@ -9058,15 +9060,18 @@ ffffffffc0204984:	100027f3          	csrr	a5,sstatus
 ffffffffc0204988:	8b89                	andi	a5,a5,2
 ffffffffc020498a:	4401                	li	s0,0
 ffffffffc020498c:	efbd                	bnez	a5,ffffffffc0204a0a <schedule+0x8c>
-    bool intr_flag;
-    list_entry_t *le, *last;
+
     struct proc_struct *next = NULL;
     local_intr_save(intr_flag);
     {
+        // 将当前进程的 need_resched 标志置为 0，表示当前进程不需要再次调度。
         current->need_resched = 0;
 ffffffffc020498e:	00011897          	auipc	a7,0x11
 ffffffffc0204992:	c228b883          	ld	a7,-990(a7) # ffffffffc02155b0 <current>
 ffffffffc0204996:	0008ac23          	sw	zero,24(a7)
+
+        // 根据当前进程是否为空闲进程来决定 last 的位置。如果当前进程是空闲进程（idleproc），则 last 是 proc_list，
+        // 即整个进程链表的头部。否则，last 指向当前进程在进程链表中的位置 (current->list_link)，这方便了链表的遍历。
         last = (current == idleproc) ? &proc_list : &(current->list_link);
 ffffffffc020499a:	00011517          	auipc	a0,0x11
 ffffffffc020499e:	c1e53503          	ld	a0,-994(a0) # ffffffffc02155b8 <idleproc>
@@ -9074,10 +9079,14 @@ ffffffffc02049a2:	04a88e63          	beq	a7,a0,ffffffffc02049fe <schedule+0x80>
 ffffffffc02049a6:	0c888693          	addi	a3,a7,200
 ffffffffc02049aa:	00011617          	auipc	a2,0x11
 ffffffffc02049ae:	b7e60613          	addi	a2,a2,-1154 # ffffffffc0215528 <proc_list>
+
+        // 初始化链表游标 le 为 last，即当前进程的位置。
         le = last;
 ffffffffc02049b2:	87b6                	mv	a5,a3
     struct proc_struct *next = NULL;
 ffffffffc02049b4:	4581                	li	a1,0
+
+        // 这里开始遍历进程链表（proc_list），从当前进程的位置 le 开始查找下一个可运行的进程（PROC_RUNNABLE 状态）
         do {
             if ((le = list_next(le)) != &proc_list) {
                 next = le2proc(le, list_link);
@@ -9097,6 +9106,8 @@ ffffffffc02049c6:	03070163          	beq	a4,a6,ffffffffc02049e8 <schedule+0x6a>
             }
         } while (le != last);
 ffffffffc02049ca:	fef697e3          	bne	a3,a5,ffffffffc02049b8 <schedule+0x3a>
+
+        // 如果没有找到可运行的进程，就设置为空闲进程（idleproc）
         if (next == NULL || next->state != PROC_RUNNABLE) {
 ffffffffc02049ce:	ed89                	bnez	a1,ffffffffc02049e8 <schedule+0x6a>
             next = idleproc;
@@ -9105,6 +9116,8 @@ ffffffffc02049ce:	ed89                	bnez	a1,ffffffffc02049e8 <schedule+0x6a>
 ffffffffc02049d0:	451c                	lw	a5,8(a0)
 ffffffffc02049d2:	2785                	addiw	a5,a5,1
 ffffffffc02049d4:	c51c                	sw	a5,8(a0)
+
+        // 如果要调度的进程 next 不是当前进程 current，则调用 proc_run(next) 执行进程切换
         if (next != current) {
 ffffffffc02049d6:	00a88463          	beq	a7,a0,ffffffffc02049de <schedule+0x60>
             proc_run(next);
