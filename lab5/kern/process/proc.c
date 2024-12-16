@@ -110,6 +110,18 @@ alloc_proc(void) {
      *       uint32_t wait_state;                        // waiting state
      *       struct proc_struct *cptr, *yptr, *optr;     // relations between processes
      */
+    proc->state = PROC_UNINIT;
+    proc->pid = -1; 
+    proc->runs = 0;  
+    proc->kstack = 0;
+    proc->need_resched = 0;
+    proc->parent = NULL;
+    proc->mm = NULL;
+    memset(&(proc->context), 0, sizeof(struct context));
+    proc->tf = NULL;
+    proc->cr3 = boot_cr3;
+    proc->flags = 0;
+    memset(proc->name, 0, PROC_NAME_LEN);
     }
     return proc;
 }
@@ -206,7 +218,15 @@ proc_run(struct proc_struct *proc) {
         *   lcr3():                   Modify the value of CR3 register
         *   switch_to():              Context switching between two processes
         */
-
+       bool intr_flag;
+        struct proc_struct *prev = current, *next = proc;
+        local_intr_save(intr_flag);
+        {
+            current = proc;
+            lcr3(next->cr3);
+            switch_to(&(prev->context), &(next->context));
+        }
+        local_intr_restore(intr_flag);
     }
 }
 
@@ -403,6 +423,30 @@ do_fork(uint32_t clone_flags, uintptr_t stack, struct trapframe *tf) {
     *    update step 1: set child proc's parent to current process, make sure current process's wait_state is 0
     *    update step 5: insert proc_struct into hash_list && proc_list, set the relation links of process
     */
+   proc = alloc_proc();
+    if (proc == NULL)
+    {
+        goto fork_out;
+    }
+
+    ret = setup_kstack(proc);
+    if (ret == -E_NO_MEM)
+    {
+        goto bad_fork_cleanup_kstack;
+    }
+    copy_mm(clone_flags, proc);
+    copy_thread(proc, stack, tf);
+
+    const int pid = get_pid();
+    proc->pid = pid;
+    nr_process++;
+
+    list_add(hash_list + pid_hashfn(pid), &(proc->hash_link));
+    list_add(&proc_list, &(proc->list_link));
+
+    wakeup_proc(proc);
+
+    ret = pid;
  
 fork_out:
     return ret;
@@ -603,7 +647,9 @@ load_icode(unsigned char *binary, size_t size) {
      *          tf->status should be appropriate for user program (the value of sstatus)
      *          hint: check meaning of SPP, SPIE in SSTATUS, use them by SSTATUS_SPP, SSTATUS_SPIE(defined in risv.h)
      */
-
+    tf->gpr.sp = USTACKTOP;//设置用户态的栈顶指针  
+    tf->epc = elf->e_entry;//设置系统调用中断返回后执行的程序入口为elf头中设置的e_entry
+    tf->status = sstatus & ~(SSTATUS_SPP | SSTATUS_SPIE);//设置sstatus寄存器清零SSTATUS_SPP位和SSTATUS_SPIE位
 
     ret = 0;
 out:
